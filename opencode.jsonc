@@ -1,0 +1,56 @@
+{
+  // Проект: Android-тюнер + песни с аккордами.
+  // Открывать как рабочую папку D:\opencode\guitar_tuner_ac.
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "android-lead",
+
+  "permissions": [
+    // Секреты и артефакты не редактируем
+    { "action": "edit", "resource": "*.jks", "effect": "deny" },
+    { "action": "edit", "resource": "*.keystore", "effect": "deny" },
+    { "action": "edit", "resource": "keystore.properties", "effect": "deny" },
+    { "action": "edit", "resource": "local.properties", "effect": "deny" },
+    { "action": "edit", "resource": "build/**", "effect": "deny" },
+    { "action": "edit", "resource": "**/build/**", "effect": "deny" },
+    { "action": "edit", "resource": "artifacts/**", "effect": "deny" },
+
+    // Остальное в проекте — можно
+    { "action": "edit", "resource": "*", "effect": "allow" },
+
+    // Shell: сборка и диагностика без подтверждения, остальное — спросить
+    { "action": "shell", "resource": "*", "effect": "ask" },
+    { "action": "shell", "resource": ".\\gradlew.bat *", "effect": "allow" },
+    { "action": "shell", "resource": "gradlew.bat *", "effect": "allow" },
+    { "action": "shell", "resource": "adb devices*", "effect": "allow" },
+    { "action": "shell", "resource": "adb shell getprop*", "effect": "allow" },
+    { "action": "shell", "resource": "adb install*", "effect": "allow" },
+    { "action": "shell", "resource": "adb shell am start*", "effect": "allow" },
+    { "action": "shell", "resource": "adb shell screencap*", "effect": "allow" },
+    { "action": "shell", "resource": "adb pull*", "effect": "allow" },
+    { "action": "shell", "resource": "android *", "effect": "allow" },
+    { "action": "shell", "resource": "git status*", "effect": "allow" },
+    { "action": "shell", "resource": "git diff*", "effect": "allow" },
+    { "action": "shell", "resource": "git log*", "effect": "allow" },
+
+    // Публикация и необратимые действия — только вручную/после подтверждения
+    { "action": "webfetch", "resource": "*", "effect": "ask" },
+    { "action": "websearch", "resource": "*", "effect": "ask" },
+
+    // Субагенты: только профильные
+    { "action": "subagent", "resource": "*", "effect": "deny" },
+    { "action": "subagent", "resource": "feature-dev", "effect": "allow" },
+    { "action": "subagent", "resource": "dsp-engineer", "effect": "allow" },
+    { "action": "subagent", "resource": "qa-engineer", "effect": "allow" },
+    { "action": "subagent", "resource": "release-manager", "effect": "allow" }
+  ],
+
+  // MCP не обязателен: Android CLI закрывает install/run/screen/layout/input.
+  // Включать, только если понадобится accessibility-обход UI.
+  "mcp": {
+    "mobile-mcp": {
+      "type": "local",
+      "command": ["npx", "-y", "@mobilenext/mobile-mcp@latest"],
+      "enabled": false
+    }
+  }
+}

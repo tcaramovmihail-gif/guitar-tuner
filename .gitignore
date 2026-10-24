@@ -1,0 +1,20 @@
+# Gradle / Android
+.gradle/
+build/
+local.properties
+.kotlin/
+.idea/
+*.iml
+captures/
+.cxx/
+.externalNativeBuild/
+
+# Локальные артефакты
+artifacts/
+
+# Секреты подписи
+keystore.properties
+*.jks
+*.keystore
+*.apk
+*.aab
