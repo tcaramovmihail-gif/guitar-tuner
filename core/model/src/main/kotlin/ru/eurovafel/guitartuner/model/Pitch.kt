@@ -1,5 +1,6 @@
 package ru.eurovafel.guitartuner.model
 
+import kotlin.math.abs
 import kotlin.math.log2
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -40,4 +41,42 @@ object PitchMath {
         val octave = midi / 12 - 1
         return NoteReading(midi, name, octave, frequency, target, cents)
     }
+
+    /**
+     * Номер гармоники цели, если частота близка к целому кратному.
+     * Например, 3-я гармоника A2 (110 Гц) — это 330 Гц (открытая E4),
+     * поэтому такие совпадения нельзя считать другой струной.
+     *
+     * Допуск — это расстройка самой струны: если струна уехала на δ центов,
+     * её n-я гармоника тоже уехала на δ (делениe на n ошибку не меняет).
+     * Поэтому 45 ¢ распознавали гармонику только у почти настроенной струны,
+     * и на 4–6 струнах с детюном 20–50 ¢ цель начинала прыгать. 150 ¢
+     * покрывают реальный диапазон подстройки и не путают соседние струны:
+     * ближайшая негармоническая пара E2→D3 даёт −200 ¢.
+     */
+    fun harmonicOf(
+        frequency: Double,
+        target: Double,
+        toleranceCents: Double = 150.0,
+    ): Int? {
+        if (frequency <= 0.0 || target <= 0.0) return null
+        val ratio = frequency / target
+        val harmonic = ratio.roundToInt()
+        if (harmonic < 2) return null
+        val error = 1200.0 * log2(ratio / harmonic)
+        return if (abs(error) <= toleranceCents) harmonic else null
+    }
+
+    /** Частота, свёрнутая к октаве или обертону цели. */
+    fun foldToTarget(frequency: Double, target: Double): Double {
+        if (frequency <= 0.0 || target <= 0.0) return frequency
+        val harmonic = harmonicOf(frequency, target)
+        if (harmonic != null) return frequency / harmonic
+        val octaves = log2(frequency / target).roundToInt()
+        return frequency / 2.0.pow(octaves)
+    }
+
+    /** Отклонение от цели в центах с учётом октав и обертонов. */
+    fun centsToTarget(frequency: Double, target: Double): Double =
+        1200.0 * log2(foldToTarget(frequency, target) / target)
 }

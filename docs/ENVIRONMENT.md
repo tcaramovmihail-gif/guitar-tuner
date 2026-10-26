@@ -127,6 +127,18 @@ adaptive, profiler и др.). При необходимости: `android skills
 .\gradlew.bat :app:connectedDebugAndroidTest  # Compose UI на эмуляторе/телефоне
 ```
 
+`connectedDebugAndroidTest` переустанавливает приложение и может стереть его данные
+(импортированные песни). На рабочем телефоне безопаснее поставить APK с `-r` и
+запустить тесты вручную:
+
+```powershell
+.\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest
+adb install -r app\build\outputs\apk\debug\app-debug.apk
+adb install -r app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk
+adb shell am instrument -w -e class ru.eurovafel.guitartuner.MainActivityTest `
+  ru.eurovafel.guitartuner.test/androidx.test.runner.AndroidJUnitRunner
+```
+
 Проверка DSP не требует устройства: тест генерирует щипковую струну с гармониками,
 шумом и расстройкой, детектор обязан попасть в ±3 цента.
 

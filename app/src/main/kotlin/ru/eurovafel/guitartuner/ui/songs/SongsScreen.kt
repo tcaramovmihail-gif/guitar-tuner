@@ -122,6 +122,8 @@ fun SongsScreen(
                         onCloseArtist = viewModel::closeArtist,
                         onOpenSong = onOpenSong,
                         onShowImportDialog = { showImportDialog = true },
+                        onLocalQueryChange = viewModel::onLocalQueryChange,
+                        onClearLocalQuery = viewModel::clearLocalQuery,
                     )
                     else -> OnlineContent(
                         state = state,
@@ -194,6 +196,8 @@ private fun MySongsContent(
     onCloseArtist: () -> Unit,
     onOpenSong: (Song) -> Unit,
     onShowImportDialog: () -> Unit,
+    onLocalQueryChange: (String) -> Unit,
+    onClearLocalQuery: () -> Unit,
 ) {
     val folder = state.openedFolder
     if (folder == null) {
@@ -207,24 +211,67 @@ private fun MySongsContent(
                     text = "Мои песни",
                     style = MaterialTheme.typography.headlineMedium,
                 )
-                Text(
-                    text = "Папки по исполнителям",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 8.dp),
+            }
+            item {
+                LocalSearchField(
+                    query = state.localQuery,
+                    onQueryChange = onLocalQueryChange,
+                    onClear = onClearLocalQuery,
                 )
             }
 
-            if (state.artists.isEmpty()) {
+            if (state.localSearching) {
                 item {
-                    EmptyLibraryCard(onShowImportDialog = onShowImportDialog)
+                    Text(
+                        text = if (state.localMatches.isEmpty()) {
+                            "Ничего не найдено"
+                        } else {
+                            "Найдено: ${songsCount(state.localMatches.size)}"
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (state.localMatches.isEmpty()) {
+                    item {
+                        Text(
+                            text = "В сохранённых песнях нет совпадений по запросу " +
+                                "«${state.localQuery.trim()}».",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("songs_local_empty"),
+                        )
+                    }
+                } else {
+                    items(state.localMatches, key = { it.id }) { song ->
+                        LibrarySongCard(
+                            song = song,
+                            showArtist = true,
+                            onClick = { onOpenSong(song) },
+                        )
+                    }
                 }
             } else {
-                items(state.artists, key = { it.artist }) { artistFolder ->
-                    ArtistFolderCard(
-                        folder = artistFolder,
-                        onClick = { onOpenArtist(artistFolder.artist) },
+                item {
+                    Text(
+                        text = "Папки по исполнителям",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
                     )
+                }
+
+                if (state.artists.isEmpty()) {
+                    item {
+                        EmptyLibraryCard(onShowImportDialog = onShowImportDialog)
+                    }
+                } else {
+                    items(state.artists, key = { it.artist }) { artistFolder ->
+                        ArtistFolderCard(
+                            folder = artistFolder,
+                            onClick = { onOpenArtist(artistFolder.artist) },
+                        )
+                    }
                 }
             }
         }
@@ -262,6 +309,35 @@ private fun MySongsContent(
             }
         }
     }
+}
+
+/** Поиск только по сохранённым песням: без сети и без задержек. */
+@Composable
+private fun LocalSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onClear: () -> Unit,
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("songs_local_search"),
+        singleLine = true,
+        label = { Text("Поиск в моих песнях") },
+        placeholder = { Text("Название или исполнитель") },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                TextButton(
+                    onClick = onClear,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                ) {
+                    Text("✕")
+                }
+            }
+        },
+    )
 }
 
 @Composable
@@ -326,7 +402,11 @@ private fun ArtistFolderCard(folder: ArtistFolder, onClick: () -> Unit) {
 }
 
 @Composable
-private fun LibrarySongCard(song: Song, onClick: () -> Unit) {
+private fun LibrarySongCard(
+    song: Song,
+    onClick: () -> Unit,
+    showArtist: Boolean = false,
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -334,6 +414,15 @@ private fun LibrarySongCard(song: Song, onClick: () -> Unit) {
             .testTag("songs_song_${song.id}"),
     ) {
         Column(Modifier.padding(16.dp)) {
+            if (showArtist) {
+                Text(
+                    text = song.artist,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Text(song.title, style = MaterialTheme.typography.titleMedium)
             Text(
                 text = buildString {

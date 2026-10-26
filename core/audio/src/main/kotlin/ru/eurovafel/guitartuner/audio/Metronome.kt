@@ -10,12 +10,18 @@ import kotlin.math.max
 import kotlin.math.sin
 import kotlin.random.Random
 
+enum class MetronomeSound {
+    CLICK,
+    DRUM,
+}
+
 /**
  * Слышимый метроном без аудиофайлов: короткий деревянный стук синтезируется
  * в памяти и проигрывается через [AudioTrack]. Первая доля такта ниже по тону
  * и громче — по ней удобно начинать песню.
  *
- * Класс не знает про UI и не требует разрешений.
+ * В режиме [MetronomeSound.DRUM] вместо щелчка звучит простая партия
+ * бочка/малый барабан с тарелкой. Класс не знает про UI и не требует разрешений.
  */
 class Metronome(
     private val sampleRate: Int = 48_000,
@@ -27,14 +33,28 @@ class Metronome(
     @Volatile
     private var bpm: Int = 90
 
+    @Volatile
+    private var sound: MetronomeSound = MetronomeSound.CLICK
+
     private var worker: Thread? = null
     private var track: AudioTrack? = null
 
     private val normalKnock = buildKnock(frequency = 190.0, amplitude = 0.65f)
     private val accentKnock = buildKnock(frequency = 155.0, amplitude = 0.95f)
+    private val drumBeats = Array(beatsPerBar) { DrumSynth.beat(sampleRate, it) }
+    private val maxSoundSize = maxOf(
+        normalKnock.size,
+        accentKnock.size,
+        drumBeats.maxOfOrNull { it.size } ?: 0,
+    )
 
     fun setBpm(value: Int) {
         bpm = value.coerceIn(MIN_BPM, MAX_BPM)
+    }
+
+    /** Смена звука применяется со следующей доли, без перезапуска. */
+    fun setSound(value: MetronomeSound) {
+        sound = value
     }
 
     /** @return true, если аудиовыход удалось открыть. */
@@ -78,9 +98,12 @@ class Metronome(
                 continue
             }
 
-            val knock = if (beat == 0) accentKnock else normalKnock
+            val buffer = when (sound) {
+                MetronomeSound.CLICK -> if (beat == 0) accentKnock else normalKnock
+                MetronomeSound.DRUM -> drumBeats[beat % drumBeats.size]
+            }
             runCatching {
-                audioTrack.write(knock, 0, knock.size, AudioTrack.WRITE_BLOCKING)
+                audioTrack.write(buffer, 0, buffer.size, AudioTrack.WRITE_BLOCKING)
             }
 
             beat = (beat + 1) % beatsPerBar
@@ -97,7 +120,7 @@ class Metronome(
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_FLOAT,
         )
-        val required = max(minBuffer, normalKnock.size * Float.SIZE_BYTES * 2)
+        val required = max(minBuffer, maxSoundSize * Float.SIZE_BYTES * 2)
 
         return AudioTrack.Builder()
             .setAudioAttributes(

@@ -59,6 +59,7 @@ data class SongsUiState(
     val savedKeys: Set<String> = emptySet(),
     val savedUrls: Set<String> = emptySet(),
     val openedArtist: String? = null,
+    val localQuery: String = "",
     val query: String = "",
     val searching: Boolean = false,
     val searched: Boolean = false,
@@ -71,6 +72,21 @@ data class SongsUiState(
 ) {
     val openedFolder: ArtistFolder?
         get() = artists.firstOrNull { it.artist == openedArtist }
+
+    /** Совпадения по уже сохранённым песням: поиск идёт без сети. */
+    val localMatches: List<Song>
+        get() {
+            val needle = localQuery.trim()
+            if (needle.isEmpty()) return emptyList()
+            return songs
+                .filter {
+                    it.title.contains(needle, ignoreCase = true) ||
+                        it.artist.contains(needle, ignoreCase = true)
+                }
+                .sortedWith(compareBy({ it.artist.lowercase() }, { it.title.lowercase() }))
+        }
+
+    val localSearching: Boolean get() = localQuery.isNotBlank()
 
     fun isSaved(remote: RemoteSong): Boolean =
         remote.url in savedUrls || songKey(remote.artist, remote.title) in savedKeys
@@ -124,6 +140,15 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Поиск по локальной библиотеке, без запросов в сеть. */
+    fun onLocalQueryChange(query: String) {
+        _state.update { it.copy(localQuery = query) }
+    }
+
+    fun clearLocalQuery() {
+        _state.update { it.copy(localQuery = "") }
+    }
+
     fun onQueryChange(query: String) {
         _state.update { it.copy(query = query) }
     }
@@ -173,7 +198,7 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openArtist(artist: String) {
-        _state.update { it.copy(openedArtist = artist) }
+        _state.update { it.copy(openedArtist = artist, localQuery = "") }
     }
 
     fun closeArtist() {

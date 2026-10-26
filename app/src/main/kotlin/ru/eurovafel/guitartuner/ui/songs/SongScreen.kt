@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import ru.eurovafel.guitartuner.audio.Metronome
+import ru.eurovafel.guitartuner.audio.MetronomeSound
 import ru.eurovafel.guitartuner.data.Song
 import ru.eurovafel.guitartuner.model.ChordTransposer
 import kotlin.math.roundToInt
@@ -64,6 +66,7 @@ fun SongScreen(song: Song, onBack: () -> Unit) {
     var bpm by rememberSaveable(song.id) { mutableFloatStateOf(song.bpm.toFloat()) }
     var playing by rememberSaveable(song.id) { mutableStateOf(false) }
     var metronomeOn by rememberSaveable(song.id) { mutableStateOf(false) }
+    var drumMode by rememberSaveable(song.id) { mutableStateOf(false) }
     var transpose by rememberSaveable(song.id) { mutableIntStateOf(0) }
 
     val originalKey = remember(song.id, song.chords, song.key) {
@@ -81,8 +84,9 @@ fun SongScreen(song: Song, onBack: () -> Unit) {
 
     // Метроном живёт отдельно от автопрокрутки, но использует тот же BPM.
     // При смене темпа достаточно обновить setBpm — перезапуск не нужен.
-    LaunchedEffect(metronomeOn, bpm) {
+    LaunchedEffect(metronomeOn, bpm, drumMode) {
         metronome.setBpm(bpm.roundToInt())
+        metronome.setSound(if (drumMode) MetronomeSound.DRUM else MetronomeSound.CLICK)
         if (metronomeOn) {
             if (!metronome.start()) {
                 metronomeOn = false
@@ -188,8 +192,36 @@ fun SongScreen(song: Song, onBack: () -> Unit) {
             )
         }
 
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Звук",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FilterChip(
+                selected = !drumMode,
+                onClick = { drumMode = false },
+                label = { Text("Щелчок") },
+                modifier = Modifier.testTag("metronome_sound_click"),
+            )
+            FilterChip(
+                selected = drumMode,
+                onClick = { drumMode = true },
+                label = { Text("Барабан") },
+                modifier = Modifier.testTag("metronome_sound_drum"),
+            )
+        }
+
         Text(
-            text = "Щелчки звучат через медиа-громкость телефона.",
+            text = if (drumMode) {
+                "Бочка и малый барабан звучат через медиа-громкость телефона."
+            } else {
+                "Щелчки звучат через медиа-громкость телефона."
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

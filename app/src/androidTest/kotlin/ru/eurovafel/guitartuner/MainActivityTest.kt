@@ -2,6 +2,8 @@ package ru.eurovafel.guitartuner
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
@@ -10,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
 import org.junit.Test
@@ -44,11 +47,35 @@ class MainActivityTest {
         composeRule.onNodeWithTag("tuner_current_string")
             .assertTextContains("Выбрана вручную", substring = true)
         composeRule.onNodeWithTag("tuner_note").assertTextEquals("D3")
+        composeRule.onNodeWithText("Тон").assertIsDisplayed()
 
         composeRule.onNodeWithText("Авто")
             .performScrollTo()
             .performClick()
 
         composeRule.onNodeWithTag("tuner_string_50").assertIsNotSelected()
+    }
+
+    @Test
+    fun savedSongsCanBeSearchedByName() {
+        composeRule.onNodeWithText("Песни").performClick()
+        composeRule.onNodeWithTag("songs_local_search").performTextInput("Учебный пример")
+
+        // Демо-песни лежат в папке «Учебный пример»; поиск показывает их без папок.
+        composeRule.onNodeWithTag("songs_song_demo-1").assertIsDisplayed()
+        composeRule.onNodeWithTag("songs_song_demo-2").assertIsDisplayed()
+        composeRule.onNodeWithTag("songs_local_empty").assertDoesNotExist()
+
+        composeRule.onNodeWithText("✕").performClick()
+        composeRule.onNodeWithTag("songs_song_demo-1").assertDoesNotExist()
+    }
+
+    @Test
+    fun stableCaptureCanBeSwitchedOff() {
+        composeRule.onNodeWithTag("tuner_stable_capture")
+            .performScrollTo()
+            .assertIsOn()
+            .performClick()
+            .assertIsOff()
     }
 }

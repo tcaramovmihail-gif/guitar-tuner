@@ -9,6 +9,17 @@ class StringTrackerTest {
     private val guitar = InstrumentTuning.GUITAR_STANDARD.midiNotes
 
     @Test
+    fun `default tracker holds the active string for a long switch window`() {
+        val tracker = StringTracker()
+        repeat(5) { tracker.update(guitar, 40) }
+
+        repeat(11) {
+            assertEquals(40, tracker.update(guitar, 45))
+        }
+        assertEquals(45, tracker.update(guitar, 45))
+    }
+
+    @Test
     fun `string is acquired only after several stable frames`() {
         val tracker = StringTracker(acquireFrames = 3)
 

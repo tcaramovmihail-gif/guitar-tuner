@@ -14,9 +14,9 @@ import kotlin.math.abs
  * Класс не зависит от Android и проверяется JVM-тестами.
  */
 class StringTracker(
-    private val acquireFrames: Int = 4,
-    private val switchFrames: Int = 8,
-    private val releaseFrames: Int = 8,
+    private val acquireFrames: Int = 5,
+    private val switchFrames: Int = 12,
+    private val releaseFrames: Int = 12,
 ) {
     private var activeMidi: Int? = null
     private var candidateMidi: Int? = null
