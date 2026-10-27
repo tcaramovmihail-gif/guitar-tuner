@@ -76,6 +76,34 @@ object PitchMath {
         return frequency / 2.0.pow(octaves)
     }
 
+    /**
+     * Сворачивает частоту к октаве/обертону цели, но только если она правда
+     * близка к ним. Чужую ноту (например, A2 при цели E4) не трогает — иначе
+     * переключение на другую струну перестало бы работать.
+     *
+     * Нужна перед сглаживанием: EMA между E2 и её октавой проходит через
+     * 120 Гц и даёт скачки в сотни центов. Свёрнутая частота остаётся 82.4.
+     */
+    fun foldNearTarget(
+        frequency: Double,
+        target: Double,
+        harmonicCents: Double = 150.0,
+    ): Double {
+        if (frequency <= 0.0 || target <= 0.0) return frequency
+        val harmonic = harmonicOf(frequency, target, harmonicCents)
+        if (harmonic != null) return frequency / harmonic
+        val octaves = log2(frequency / target).roundToInt()
+        // Вверх — только на одну октаву: 82 Гц при цели E4 (329.6) это уже
+        // скорее настоящая шестая струна, чем ошибка детектора.
+        if (octaves == 0 || octaves < -1) return frequency
+        val folded = frequency / 2.0.pow(octaves)
+        val error = abs(1200.0 * log2(folded / target))
+        return if (error <= OCTAVE_FOLD_CENTS) folded else frequency
+    }
+
+    /** Допуск, с которым частота считается октавой цели, центы. */
+    const val OCTAVE_FOLD_CENTS = 100.0
+
     /** Отклонение от цели в центах с учётом октав и обертонов. */
     fun centsToTarget(frequency: Double, target: Double): Double =
         1200.0 * log2(foldToTarget(frequency, target) / target)

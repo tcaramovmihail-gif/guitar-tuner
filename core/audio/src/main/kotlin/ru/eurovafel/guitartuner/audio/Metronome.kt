@@ -36,16 +36,25 @@ class Metronome(
     @Volatile
     private var sound: MetronomeSound = MetronomeSound.CLICK
 
+    @Volatile
+    private var pattern: DrumPattern = DrumPattern.ROCK
+
     private var worker: Thread? = null
     private var track: AudioTrack? = null
 
     private val normalKnock = buildKnock(frequency = 190.0, amplitude = 0.65f)
     private val accentKnock = buildKnock(frequency = 155.0, amplitude = 0.95f)
-    private val drumBeats = Array(beatsPerBar) { DrumSynth.beat(sampleRate, it) }
+    private val drumSteps: Map<DrumPattern, List<FloatArray>> =
+        DrumPattern.entries.associateWith { value ->
+            value.steps.mapIndexed { index, step ->
+                // Восьмые на сильной доле звучат с акцентом — рисунок живее.
+                DrumSynth.step(sampleRate, step, accent = index % 2 == 0)
+            }
+        }
     private val maxSoundSize = maxOf(
         normalKnock.size,
         accentKnock.size,
-        drumBeats.maxOfOrNull { it.size } ?: 0,
+        drumSteps.values.maxOfOrNull { steps -> steps.maxOfOrNull { it.size } ?: 0 } ?: 0,
     )
 
     fun setBpm(value: Int) {
@@ -55,6 +64,11 @@ class Metronome(
     /** Смена звука применяется со следующей доли, без перезапуска. */
     fun setSound(value: MetronomeSound) {
         sound = value
+    }
+
+    /** Смена барабанного рисунка применяется со следующей доли. */
+    fun setPattern(value: DrumPattern) {
+        pattern = value
     }
 
     /** @return true, если аудиовыход удалось открыть. */
@@ -86,7 +100,9 @@ class Metronome(
     }
 
     private fun playLoop(audioTrack: AudioTrack) {
-        var beat = 0
+        var clickBeat = 0
+        var drumStep = 0
+        var lastSound = sound
         var nextBeatNanos = System.nanoTime()
         runCatching { audioTrack.play() }
 
@@ -98,18 +114,42 @@ class Metronome(
                 continue
             }
 
-            val buffer = when (sound) {
-                MetronomeSound.CLICK -> if (beat == 0) accentKnock else normalKnock
-                MetronomeSound.DRUM -> drumBeats[beat % drumBeats.size]
+            val currentSound = sound
+            if (currentSound != lastSound) {
+                // После переключения начинаем рисунок с первой доли.
+                clickBeat = 0
+                drumStep = 0
+                lastSound = currentSound
+            }
+
+            val beatNanos = 60_000_000_000L / bpm
+            val buffer = when (currentSound) {
+                MetronomeSound.CLICK -> {
+                    val value = if (clickBeat == 0) accentKnock else normalKnock
+                    clickBeat = (clickBeat + 1) % beatsPerBar
+                    value
+                }
+                MetronomeSound.DRUM -> {
+                    val steps = drumSteps.getValue(pattern)
+                    val value = steps[drumStep % steps.size]
+                    drumStep = (drumStep + 1) % steps.size
+                    value
+                }
             }
             runCatching {
                 audioTrack.write(buffer, 0, buffer.size, AudioTrack.WRITE_BLOCKING)
             }
 
-            beat = (beat + 1) % beatsPerBar
-            nextBeatNanos += 60_000_000_000L / bpm
+            // Барабаны идут восьмыми, щелчок — четвертями. Темп общий,
+            // поэтому рисунок ускоряется и замедляется вместе с песней.
+            val intervalNanos = if (currentSound == MetronomeSound.DRUM) {
+                beatNanos / 2
+            } else {
+                beatNanos
+            }
+            nextBeatNanos += intervalNanos
             if (nextBeatNanos < now) {
-                nextBeatNanos = now + 60_000_000_000L / bpm
+                nextBeatNanos = now + intervalNanos
             }
         }
     }

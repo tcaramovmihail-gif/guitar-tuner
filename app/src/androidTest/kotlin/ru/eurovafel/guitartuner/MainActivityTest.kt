@@ -6,7 +6,6 @@ import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -27,8 +26,15 @@ class MainActivityTest {
     @Test
     fun tunerScreenIsVisibleOnLaunch() {
         composeRule.onNodeWithTag("tuner_screen").assertIsDisplayed()
-        composeRule.onNodeWithTag("tuner_note").assertTextEquals("—")
+        composeRule.onNodeWithTag("tuner_status").assertIsDisplayed()
         composeRule.onNodeWithTag("tuner_toggle").assertIsDisplayed()
+    }
+
+    @Test
+    fun chordsTabShowsBasicChords() {
+        composeRule.onNodeWithText("Аккорды").performClick()
+        composeRule.onNodeWithTag("chords_screen").assertIsDisplayed()
+        composeRule.onNodeWithTag("chord_C").assertIsDisplayed()
     }
 
     @Test
@@ -46,7 +52,7 @@ class MainActivityTest {
         composeRule.onNodeWithTag("tuner_string_50").assertIsSelected()
         composeRule.onNodeWithTag("tuner_current_string")
             .assertTextContains("Выбрана вручную", substring = true)
-        composeRule.onNodeWithTag("tuner_note").assertTextEquals("D3")
+            .assertTextContains("D3", substring = true)
         composeRule.onNodeWithText("Тон").assertIsDisplayed()
 
         composeRule.onNodeWithText("Авто")

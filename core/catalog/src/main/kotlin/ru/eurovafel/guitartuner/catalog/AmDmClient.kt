@@ -1,23 +1,29 @@
 package ru.eurovafel.guitartuner.catalog
 
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/** HTTP-клиент AmDm без сторонних сетевых библиотек. */
+/**
+ * HTTP-клиент AmDm без сторонних сетевых библиотек.
+ *
+ * [baseUrl] позволяет подключить зеркало (`501.amdm.ru`): вёрстка та же,
+ * поэтому парсер общий, а ссылки резолвятся от нужного домена.
+ */
 class AmDmClient(
     private val baseUrl: String = AmDmParser.BASE_URL,
+    private val sourceName: String = "AmDm",
 ) {
     fun search(query: String): SearchResult {
         val encoded = URLEncoder.encode(query.trim(), StandardCharsets.UTF_8.name())
         val songs = AmDmParser.parseSearchSongs(
-            get("${baseUrl.trimEnd('/')}/search/?q=$encoded"),
-        )
+            HtmlHttp.get("${baseUrl.trimEnd('/')}/search/?q=$encoded"),
+            baseUrl = baseUrl,
+        ).map { it.copy(sourceName = sourceName) }
         val artists = runCatching {
             AmDmParser.parseArtistSearch(
-                get("${baseUrl.trimEnd('/')}/search/artist/?q=$encoded"),
+                HtmlHttp.get("${baseUrl.trimEnd('/')}/search/artist/?q=$encoded"),
+                baseUrl = baseUrl,
             )
         }.getOrDefault(emptyList())
 
@@ -26,19 +32,26 @@ class AmDmClient(
 
     fun artistSongs(artistUrl: String): ArtistSongs {
         val resolved = resolve(artistUrl)
-        val html = get(resolved)
-        val parsed = AmDmParser.parseArtistSongs(html, resolved)
+        val html = HtmlHttp.get(resolved)
+        val parsed = AmDmParser.parseArtistSongs(
+            html,
+            fallbackArtistUrl = resolved,
+            baseUrl = baseUrl,
+        )
         return if (parsed.artist.isBlank()) {
-            parsed.copy(artist = artistNameFromUrl(resolved))
+            parsed.copy(
+                artist = artistNameFromUrl(resolved),
+                songs = parsed.songs.map { it.copy(sourceName = sourceName) },
+            )
         } else {
-            parsed
+            parsed.copy(songs = parsed.songs.map { it.copy(sourceName = sourceName) })
         }
     }
 
     fun song(songUrl: String): SongPage {
         val resolved = resolve(songUrl)
-        val html = get(resolved)
-        return AmDmParser.parseSong(html, resolved)
+        val html = HtmlHttp.get(resolved)
+        return AmDmParser.parseSong(html, resolved, baseUrl = baseUrl)
             ?: throw IOException("Не удалось разобрать страницу песни: $resolved")
     }
 
@@ -53,34 +66,4 @@ class AmDmClient(
             .substringAfterLast('/')
             .replace('_', ' ')
             .replaceFirstChar { it.titlecase() }
-
-    private fun get(url: String): String {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = CONNECT_TIMEOUT_MS
-            readTimeout = READ_TIMEOUT_MS
-            requestMethod = "GET"
-            instanceFollowRedirects = true
-            setRequestProperty("User-Agent", USER_AGENT)
-            setRequestProperty("Accept", "text/html,application/xhtml+xml")
-            setRequestProperty("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.5")
-        }
-
-        try {
-            val code = connection.responseCode
-            if (code !in 200..299) {
-                throw IOException("HTTP $code: $url")
-            }
-            return connection.inputStream
-                .bufferedReader(StandardCharsets.UTF_8)
-                .use { it.readText() }
-        } finally {
-            connection.disconnect()
-        }
-    }
-
-    private companion object {
-        const val CONNECT_TIMEOUT_MS = 15_000
-        const val READ_TIMEOUT_MS = 25_000
-        const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14) GuitarTuner/0.1"
-    }
 }

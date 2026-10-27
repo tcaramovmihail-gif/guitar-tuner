@@ -55,4 +55,23 @@ class PitchMathTest {
         val d3 = PitchMath.midiToFrequency(50)
         assertNull(PitchMath.harmonicOf(d3, e2))
     }
+
+    @Test
+    fun `octave and harmonic errors fold to the target`() {
+        assertEquals(a2, PitchMath.foldNearTarget(a2 * 2.0, a2), 0.01)
+        assertEquals(a2, PitchMath.foldNearTarget(a2 * 3.0, a2), 0.01)
+        assertEquals(a2, PitchMath.foldNearTarget(a2 / 2.0, a2), 0.01)
+    }
+
+    @Test
+    fun `another open string is not folded to the target`() {
+        val e2 = PitchMath.midiToFrequency(40)
+        val a2Note = PitchMath.midiToFrequency(45)
+        val e4 = PitchMath.midiToFrequency(64)
+
+        // A2 при цели E2 — другая струна, её нельзя тянуть к E2.
+        assertEquals(a2Note, PitchMath.foldNearTarget(a2Note, e2), 0.001)
+        // A2 при цели E4 — тоже другая струна, хотя и на две октавы ниже.
+        assertEquals(a2Note, PitchMath.foldNearTarget(a2Note, e4), 0.001)
+    }
 }

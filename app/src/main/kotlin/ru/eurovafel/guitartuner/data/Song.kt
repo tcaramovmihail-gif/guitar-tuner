@@ -13,6 +13,7 @@ data class Song(
     val key: String? = null,
     val sourceUrl: String? = null,
     val savedAt: Long = 0L,
+    val favorite: Boolean = false,
 )
 
 /** Ключ для сравнения песен без учёта регистра и лишних пробелов. */

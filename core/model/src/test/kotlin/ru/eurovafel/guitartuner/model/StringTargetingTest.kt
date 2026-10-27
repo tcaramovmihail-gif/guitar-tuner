@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 import kotlin.math.pow
+import kotlin.math.pow
 
 class StringTargetingTest {
 
@@ -68,6 +69,20 @@ class StringTargetingTest {
     }
 
     @Test
+    fun `first acquisition from a third harmonic picks the fundamental string`() {
+        // A4 (3-я гармоника D3) и D5 (3-я гармоника G3) — не открытые ноты.
+        assertEquals(50, StringTargeting.resolve(guitar, PitchMath.midiToFrequency(69)))
+        assertEquals(55, StringTargeting.resolve(guitar, PitchMath.midiToFrequency(74)))
+    }
+
+    @Test
+    fun `first acquisition still prefers an open string at its own pitch`() {
+        assertEquals(64, StringTargeting.resolve(guitar, e4))
+        assertEquals(59, StringTargeting.resolve(guitar, PitchMath.midiToFrequency(59)))
+        assertEquals(40, StringTargeting.resolve(guitar, e2))
+    }
+
+    @Test
     fun `detuned harmonic does not switch the target`() {
         // 4–6 струны часто на 30–50 ¢ ниже: 3-я гармоника уезжает вместе с ними,
         // но остаётся гармоникой активной струны.
@@ -75,6 +90,21 @@ class StringTargetingTest {
         assertEquals(45, StringTargeting.resolve(guitar, a2 * 3.0 * flat, active = 45))
         assertEquals(40, StringTargeting.resolve(guitar, e2 * 3.0 * flat, active = 40))
         assertEquals(45, StringTargeting.hint(guitar, a2 * 3.0 * flat, active = 45))
+    }
+
+    @Test
+    fun `new pluck switches to another string even when it is detuned`() {
+        // E2 была активна, сыграли D3 на 215 ¢ ниже строя — класс ноты уже другой.
+        val detunedD3 = PitchMath.midiToFrequency(50) * 2.0.pow(-215.0 / 1200.0)
+        assertEquals(50, StringTargeting.freshCandidate(guitar, detunedD3, active = 40))
+        assertEquals(55, StringTargeting.freshCandidate(guitar, g3, active = 50))
+    }
+
+    @Test
+    fun `new pluck keeps the active string on its harmonic or octave`() {
+        assertEquals(45, StringTargeting.freshCandidate(guitar, a2 * 3.0, active = 45))
+        assertEquals(40, StringTargeting.freshCandidate(guitar, e2 * 4.0, active = 40))
+        assertEquals(40, StringTargeting.freshCandidate(guitar, e2 * 2.0, active = 40))
     }
 
     @Test

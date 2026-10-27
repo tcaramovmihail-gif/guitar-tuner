@@ -17,6 +17,7 @@ class StringTracker(
     private val acquireFrames: Int = 5,
     private val switchFrames: Int = 12,
     private val releaseFrames: Int = 12,
+    private val ancestorFrames: Int = 2,
 ) {
     private var activeMidi: Int? = null
     private var candidateMidi: Int? = null
@@ -24,7 +25,11 @@ class StringTracker(
     private var silentFrames = 0
 
     /** @return активная струна или null, пока струна ещё не определена. */
-    fun update(openStrings: List<Int>, detectedMidi: Int?): Int? {
+    fun update(
+        openStrings: List<Int>,
+        detectedMidi: Int?,
+        fastSwitch: Boolean = false,
+    ): Int? {
         if (openStrings.isEmpty()) {
             reset()
             return null
@@ -60,7 +65,19 @@ class StringTracker(
         }
 
         addCandidate(matched)
-        if (candidateFrames >= switchFrames) {
+        // Активная струна оказалась обертоном новой (E4 = 3×A2, B3 = 3×E2):
+        // настоящая струна не может звучать выше своего обертона, поэтому
+        // верим нижней ноте сразу, не дожидаясь длинного окна смены.
+        val ancestor = PitchMath.harmonicOf(
+            PitchMath.midiToFrequency(active),
+            PitchMath.midiToFrequency(matched),
+        ) != null
+        val needed = when {
+            ancestor -> ancestorFrames
+            fastSwitch -> NEW_PLUCK_FRAMES
+            else -> switchFrames
+        }
+        if (candidateFrames >= needed) {
             activeMidi = matched
             clearCandidate()
         }
@@ -85,5 +102,10 @@ class StringTracker(
     private fun clearCandidate() {
         candidateMidi = null
         candidateFrames = 0
+    }
+
+    private companion object {
+        /** Смена струны на новой щипковой атаке: быстрее обычного окна. */
+        const val NEW_PLUCK_FRAMES = 3
     }
 }

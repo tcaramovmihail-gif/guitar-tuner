@@ -1,6 +1,7 @@
 package ru.eurovafel.guitartuner.ui.tuner
 
 import androidx.lifecycle.ViewModel
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -66,6 +67,9 @@ class TunerViewModel : ViewModel() {
     /** Последняя уверенная нота: держим её, пока струна затухает. */
     private var lastReading: NoteReading? = null
     private var weakFrames = 0
+
+    /** Кадры без уверенного сигнала: пауза перед новым щипком. */
+    private var silentFrames = 0
 
     /** Сколько кадров подряд струна держится в строю (затухание не сбрасывает). */
     private val inTuneHold = InTuneHold(
@@ -240,20 +244,38 @@ class TunerViewModel : ViewModel() {
     private fun onSamples(samples: FloatArray) {
         if (!_state.value.listening) return
 
-        // Микрофон телефона часто пишет тише, чем нужно детектору.
-        // Фиксированное усиление поднимает тихую гитару, не меняя форму сигнала.
-        val amplified = FloatArray(samples.size) { samples[it] * INPUT_GAIN }
-        val result = detector.detect(amplified)
-
-        var energy = 0.0
-        for (value in amplified) {
-            energy += value.toDouble() * value
+        var rawEnergy = 0.0
+        var peak = 0f
+        for (value in samples) {
+            rawEnergy += value.toDouble() * value
+            val magnitude = abs(value)
+            if (magnitude > peak) peak = magnitude
         }
-        val rms = kotlin.math.sqrt(energy / amplified.size)
-        val level = levelFromRms(rms)
+        val rawRms = kotlin.math.sqrt(rawEnergy / samples.size)
+        // Фиксированное ×8 перегружало тракт на низких струнах: клиппинг
+        // добавлял гармоники, и детектор уходил на октаву/обертон. Подбираем
+        // усиление под кадр, оставляя запас до 0.9 по пику.
+        val gain = inputGain(rawRms, peak)
+        val amplified = FloatArray(samples.size) { index ->
+            (samples[index] * gain).coerceIn(-1f, 1f)
+        }
+        val result = detector.detect(amplified)
+        val level = levelFromRms(rawRms * INPUT_GAIN)
 
-        val frequency = smoother.accept(result)
         val a4 = _state.value.a4
+        val previousAuto = _state.value.autoStringMidi
+        val activeForFold = _state.value.manualStringMidi ?: previousAuto
+        val targetForFold = activeForFold?.let { PitchMath.midiToFrequency(it, a4) }
+
+        // Перед сглаживанием сворачиваем октавы и обертоны к цели: иначе EMA
+        // между E2 и E3 проходит через 120 Гц, и стрелка улетает на край шкалы.
+        // Чужую струну foldNearTarget не трогает, поэтому смена цели работает.
+        val foldInput = if (result != null && targetForFold != null) {
+            result.copy(frequency = PitchMath.foldNearTarget(result.frequency, targetForFold))
+        } else {
+            result
+        }
+        val frequency = smoother.accept(foldInput)
         val stableCapture = _state.value.stableCapture
         val minClarity = if (stableCapture) {
             STABLE_STRING_MIN_CLARITY
@@ -267,7 +289,18 @@ class TunerViewModel : ViewModel() {
         val confident = result != null &&
             frequency != null &&
             result.clarity >= minClarity &&
-            result.rms >= minRms
+            rawRms >= minRms
+
+        // Пауза перед щипком — хороший момент перепроверить струну: после неё
+        // могла зазвучать другая. Внутри одной ноты цель остаётся зафиксированной.
+        val newPluck: Boolean
+        if (confident) {
+            newPluck = silentFrames >= NEW_PLUCK_SILENCE_FRAMES
+            silentFrames = 0
+        } else {
+            silentFrames++
+            newPluck = false
+        }
 
         val reading: NoteReading?
         if (confident) {
@@ -288,15 +321,30 @@ class TunerViewModel : ViewModel() {
         val tuning = _state.value.tuning
         val detectedFrequency = if (confident) reading?.frequency else null
         val autoString = if (detectedFrequency != null) {
-            val candidate = StringTargeting.resolve(
-                openStrings = tuning.midiNotes,
-                frequency = detectedFrequency,
-                a4 = a4,
-                active = _state.value.autoStringMidi,
-            )
-            stringTracker.update(tuning.midiNotes, candidate)
+            val candidate = if (newPluck) {
+                StringTargeting.freshCandidate(
+                    openStrings = tuning.midiNotes,
+                    frequency = detectedFrequency,
+                    a4 = a4,
+                    active = previousAuto,
+                )
+            } else {
+                StringTargeting.resolve(
+                    openStrings = tuning.midiNotes,
+                    frequency = detectedFrequency,
+                    a4 = a4,
+                    active = previousAuto,
+                )
+            }
+            stringTracker.update(tuning.midiNotes, candidate, fastSwitch = newPluck)
         } else {
             stringTracker.update(tuning.midiNotes, null)
+        }
+        if (autoString != previousAuto) {
+            // Новая цель — начинаем сглаживание с чистого листа, без бленда
+            // между старой и новой струной.
+            smoother.reset()
+            resetReadingHold()
         }
         val activeMidi = _state.value.manualStringMidi ?: autoString
         val detectedString = detectedFrequency?.let { frequency ->
@@ -353,6 +401,7 @@ class TunerViewModel : ViewModel() {
     private fun resetReadingHold() {
         lastReading = null
         weakFrames = 0
+        silentFrames = 0
     }
 
     private fun resetCelebration() {
@@ -366,9 +415,9 @@ class TunerViewModel : ViewModel() {
     }
 
     private fun createStringTracker(stable: Boolean): StringTracker = if (stable) {
-        StringTracker(acquireFrames = 6, switchFrames = 16, releaseFrames = 22)
+        StringTracker(acquireFrames = 6, switchFrames = 16, releaseFrames = 60)
     } else {
-        StringTracker(acquireFrames = 3, switchFrames = 6, releaseFrames = 8)
+        StringTracker(acquireFrames = 3, switchFrames = 6, releaseFrames = 24)
     }
 
     /**
@@ -378,23 +427,43 @@ class TunerViewModel : ViewModel() {
     private fun levelFromRms(rms: Double): Float {
         if (rms <= 0.0) return 0f
         val db = 20.0 * log10(rms)
-        val floorDb = 20.0 * log10(FAST_STRING_MIN_RMS)
+        val floorDb = 20.0 * log10(FAST_STRING_MIN_RMS * INPUT_GAIN)
         val ceilDb = -6.0
         return ((db - floorDb) / (ceilDb - floorDb)).coerceIn(0.0, 1.0).toFloat()
+    }
+
+    /**
+     * Усиление под конкретный кадр: подтягиваем тихую гитару, но не даём
+     * пику выйти за [PEAK_CEILING]. Клиппинг на низких струнах добавлял
+     * гармоники, из-за которых детектор уходил на октаву или обертон.
+     */
+    private fun inputGain(rms: Double, peak: Float): Float {
+        if (rms <= 1e-6 || peak <= 0f) return MAX_INPUT_GAIN
+        val rmsGain = (TARGET_INPUT_RMS / rms).toFloat()
+        val peakGain = PEAK_CEILING / peak
+        return minOf(rmsGain, peakGain, MAX_INPUT_GAIN).coerceAtLeast(1f)
     }
 
     private companion object {
         const val SAMPLE_RATE = 48_000
         const val FRAME_SIZE = 4096
         const val INPUT_GAIN = 8f
+        /** Максимум адаптивного усиления и целевой RMS кадра. */
+        const val MAX_INPUT_GAIN = 8f
+        const val TARGET_INPUT_RMS = 0.12
+        const val PEAK_CEILING = 0.9f
         const val MIN_FREQUENCY = 40.0
         const val MAX_FREQUENCY = 1400.0
         const val MIN_A4 = 430.0
         const val MAX_A4 = 450.0
         const val STABLE_STRING_MIN_CLARITY = 0.86
-        const val STABLE_STRING_MIN_RMS = 0.010
+        /** Порог RMS исходного сигнала (до усиления): ≈0.010 при ×8. */
+        const val STABLE_STRING_MIN_RMS = 0.00125
         const val FAST_STRING_MIN_CLARITY = 0.78
-        const val FAST_STRING_MIN_RMS = 0.006
+        /** ≈0.006 при ×8. */
+        const val FAST_STRING_MIN_RMS = 0.00075
+        /** Пауза перед щипком, после которой перепроверяем струну. */
+        const val NEW_PLUCK_SILENCE_FRAMES = 4
         /** Сколько кадров (≈85 мс каждый) держим последнюю ноту на затухании. */
         const val READ_HOLD_FRAMES = 12
         /** Доля, с которой экран догоняет новую частоту. */

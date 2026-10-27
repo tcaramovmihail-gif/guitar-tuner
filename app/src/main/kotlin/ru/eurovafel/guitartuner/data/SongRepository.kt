@@ -48,6 +48,17 @@ class SongRepository(context: Context) {
         _songs.value = database.readAll()
     }
 
+    suspend fun deleteAll(ids: Collection<String>) = withContext(Dispatchers.IO) {
+        if (ids.isEmpty()) return@withContext
+        database.deleteAll(ids)
+        _songs.value = database.readAll()
+    }
+
+    suspend fun setFavorite(id: String, favorite: Boolean) = withContext(Dispatchers.IO) {
+        database.setFavorite(id, favorite)
+        _songs.value = database.readAll()
+    }
+
     fun snapshot(): List<Song> = _songs.value
 
     private companion object {

@@ -12,13 +12,28 @@ android {
         applicationId = "ru.eurovafel.guitartuner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 6
+        versionName = "0.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // Telegram-дублирование необязательно: без токена отзывы идут только
+        // на почту. Токен и chat_id задаются в local.properties или в env.
+        val telegramToken = providers.gradleProperty("telegram.bot.token")
+            .orElse(System.getenv("TELEGRAM_BOT_TOKEN") ?: "")
+            .get()
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+        val telegramChatId = providers.gradleProperty("telegram.chat.id")
+            .orElse(System.getenv("TELEGRAM_CHAT_ID") ?: "")
+            .get()
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+        buildConfigField("String", "TELEGRAM_BOT_TOKEN", "\"$telegramToken\"")
+        buildConfigField("String", "TELEGRAM_CHAT_ID", "\"$telegramChatId\"")
     }
 
     buildTypes {
@@ -38,6 +53,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -65,6 +81,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.osmdroid.android)
 
     implementation(project(":core:model"))
     implementation(project(":core:dsp"))

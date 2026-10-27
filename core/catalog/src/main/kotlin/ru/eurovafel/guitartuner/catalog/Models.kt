@@ -1,6 +1,6 @@
 package ru.eurovafel.guitartuner.catalog
 
-/** Песня, найденная на AmDm, но ещё не загруженная в приложение. */
+/** Песня, найденная в онлайн-каталоге, но ещё не загруженная в приложение. */
 data class RemoteSong(
     val title: String,
     val artist: String,
@@ -8,6 +8,8 @@ data class RemoteSong(
     val artistUrl: String? = null,
     val views: Long = 0L,
     val verified: Boolean = false,
+    /** Откуда пришёл результат: AmDm, AmDm 501, Akkords.pro. */
+    val sourceName: String = "AmDm",
 )
 
 /** Исполнитель из поиска или со страницы исполнителя. */

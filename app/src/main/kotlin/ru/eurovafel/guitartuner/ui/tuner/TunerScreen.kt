@@ -17,6 +17,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,9 +29,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -51,6 +54,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -73,6 +77,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
@@ -90,9 +95,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
 import ru.eurovafel.guitartuner.model.InstrumentTuning
 import ru.eurovafel.guitartuner.model.PitchMath
 import ru.eurovafel.guitartuner.ui.theme.GuitarTunerTheme
+import ru.eurovafel.guitartuner.ui.theme.ThemeChoice
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -110,7 +117,11 @@ internal const val IN_TUNE_CENTS = 8.0
 private const val GAUGE_RANGE_CENTS = 50.0
 
 @Composable
-fun TunerScreen(viewModel: TunerViewModel = viewModel()) {
+fun TunerScreen(
+    themeChoice: ThemeChoice = ThemeChoice.MINT,
+    onThemeChange: (ThemeChoice) -> Unit = {},
+    viewModel: TunerViewModel = viewModel(),
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val view = LocalView.current
@@ -142,6 +153,8 @@ fun TunerScreen(viewModel: TunerViewModel = viewModel()) {
         state = state,
         hasPermission = hasPermission,
         permissionRequested = permissionRequested,
+        themeChoice = themeChoice,
+        onThemeChange = onThemeChange,
         onStart = {
             if (hasPermission) {
                 viewModel.start()
@@ -174,6 +187,8 @@ fun TunerContent(
     onSelectString: (Int?) -> Unit,
     onStableCaptureChange: (Boolean) -> Unit,
     onPlayReference: () -> Unit,
+    themeChoice: ThemeChoice = ThemeChoice.MINT,
+    onThemeChange: (ThemeChoice) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val reading = state.reading
@@ -242,12 +257,6 @@ fun TunerContent(
         }
     }
     val inTune = cents != null && abs(cents) <= IN_TUNE_CENTS
-    val noteColor = when {
-        inTune -> MaterialTheme.colorScheme.primary
-        stringMidi == null && reading == null -> MaterialTheme.colorScheme.onSurfaceVariant
-        !matchesActive -> MaterialTheme.colorScheme.onSurfaceVariant
-        else -> MaterialTheme.colorScheme.onSurface
-    }
     val statusContainerColor = if (inTune) {
         MaterialTheme.colorScheme.primaryContainer
     } else {
@@ -293,6 +302,10 @@ fun TunerContent(
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.weight(1f),
             )
+            ThemeMenu(
+                current = themeChoice,
+                onSelect = onThemeChange,
+            )
             TuningMenu(
                 current = state.tuning,
                 a4 = state.a4,
@@ -300,16 +313,6 @@ fun TunerContent(
                 onA4Click = { showA4Dialog = true },
             )
         }
-
-        Text(
-            text = noteName,
-            fontSize = 72.sp,
-            lineHeight = 80.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace,
-            color = noteColor,
-            modifier = Modifier.testTag("tuner_note"),
-        )
 
         Surface(
             color = statusContainerColor,
@@ -550,6 +553,61 @@ fun TunerContent(
     }
 }
 
+/** Выбор цветовой схемы: четыре точки-образца. */
+@Composable
+private fun ThemeMenu(
+    current: ThemeChoice,
+    onSelect: (ThemeChoice) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+
+    Box {
+        TextButton(
+            onClick = { open = true },
+            modifier = Modifier.testTag("theme_menu"),
+        ) {
+            Text(
+                text = "◐",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+        ) {
+            ThemeChoice.entries.forEach { choice ->
+                DropdownMenuItem(
+                    text = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(16.dp)
+                                    .background(choice.preview, CircleShape),
+                            )
+                            Text(
+                                text = choice.title,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            if (choice == current) {
+                                Text("✓", color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    },
+                    onClick = {
+                        onSelect(choice)
+                        open = false
+                    },
+                    modifier = Modifier.testTag("theme_${choice.name}"),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun TuningMenu(
     current: InstrumentTuning,
@@ -616,7 +674,7 @@ private fun StringRow(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         tuning.midiNotes.forEach { midi ->
             val number = tuning.midiNotes.size - tuning.midiNotes.indexOf(midi)
@@ -624,23 +682,26 @@ private fun StringRow(
             FilterChip(
                 selected = midi == selectedMidi,
                 onClick = { onSelectString(midi) },
+                shape = RoundedCornerShape(14.dp),
                 label = {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             text = "$number",
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 14.sp,
-                            lineHeight = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            lineHeight = 19.sp,
                         )
                         Text(
                             text = note,
-                            fontSize = 9.sp,
-                            lineHeight = 10.sp,
+                            fontSize = 15.sp,
+                            lineHeight = 16.sp,
                         )
                     }
                 },
                 modifier = Modifier
                     .weight(1f)
+                    .height(60.dp)
                     .testTag("tuner_string_$midi")
                     .semantics {
                         contentDescription = "Струна $number, $note"
@@ -734,6 +795,40 @@ private fun TuningPerson(
         )
     }
 
+    // Пёс говорит по нажатию: две строчки с паузой в две секунды.
+    var dogLine by remember { mutableStateOf<Int?>(null) }
+    var dogPulse by remember { mutableIntStateOf(0) }
+    LaunchedEffect(dogPulse) {
+        if (dogPulse == 0) return@LaunchedEffect
+        dogLine = 0
+        delay(2_000L)
+        dogLine = null
+        delay(2_000L)
+        dogLine = 1
+        delay(2_000L)
+        dogLine = null
+    }
+    val bubbleFill = MaterialTheme.colorScheme.surfaceVariant
+    val bubbleInk = MaterialTheme.colorScheme.onSurfaceVariant
+    val dogSpeechStyle = TextStyle(
+        color = bubbleInk,
+        fontSize = 9.sp,
+        lineHeight = 11.sp,
+        fontWeight = FontWeight.Bold,
+        textAlign = TextAlign.Center,
+    )
+    val dogFirstLine = remember(textMeasurer, bubbleInk) {
+        textMeasurer.measure(AnnotatedString("А не спеть ли мне песню...."), style = dogSpeechStyle)
+    }
+    val dogSecondLine = remember(textMeasurer, bubbleInk) {
+        textMeasurer.measure(AnnotatedString("ооооо любви"), style = dogSpeechStyle)
+    }
+    val dogSpeech = when (dogLine) {
+        0 -> dogFirstLine
+        1 -> dogSecondLine
+        else -> null
+    }
+
     val stringLabel = selectedMidi?.let { midi ->
         val index = strings.indexOf(midi)
         if (index >= 0) "Струна ${strings.size - index}" else null
@@ -748,6 +843,15 @@ private fun TuningPerson(
             .pointerInput(strings) {
                 val touchSlop = 20.dp.toPx()
                 detectTapGestures { tap ->
+                    // Собака слева внизу: касание показывает её реплику.
+                    val dogX = size.width * 0.185f
+                    val dogGround = size.height * 0.89f
+                    if (tap.x in dogX - 22.dp.toPx()..dogX + 22.dp.toPx() &&
+                        tap.y in dogGround - 52.dp.toPx()..dogGround + 4.dp.toPx()
+                    ) {
+                        dogPulse++
+                        return@detectTapGestures
+                    }
                     val layout = PersonLayout(
                         width = size.width.toFloat(),
                         height = size.height.toFloat(),
@@ -1174,6 +1278,20 @@ private fun TuningPerson(
             topLeft = Offset(tuningHand.x - 4.5.dp.toPx(), tuningHand.y - 5.dp.toPx()),
             size = Size(9.dp.toPx(), 10.dp.toPx()),
         )
+
+        // Пёс сидит слева у ног и по нажатию говорит две строчки.
+        drawDog(
+            x = size.width * 0.185f,
+            groundY = size.height * 0.89f,
+            bodyColor = Color(0xFFB07A4A),
+            darkColor = Color(0xFF6F4526),
+            creamColor = Color(0xFFEAD2AE),
+            inkColor = ink,
+            speech = dogSpeech,
+            bubbleFill = bubbleFill,
+            bubbleInk = bubbleInk,
+            bubbleBorder = accent,
+        )
     }
 }
 
@@ -1210,6 +1328,142 @@ private fun DrawScope.drawRockHand(center: Offset, color: Color, unit: Float) {
         topLeft = Offset(center.x - unit * 0.62f, center.y - unit * 0.40f),
         size = Size(unit * 1.26f, unit * 1.12f),
         cornerRadius = CornerRadius(unit * 0.40f),
+    )
+}
+
+/**
+ * Пёс у ног гитариста. Над головой появляется облачко с очередной строчкой;
+ * какую именно и когда — решает вызывающий код.
+ */
+private fun DrawScope.drawDog(
+    x: Float,
+    groundY: Float,
+    bodyColor: Color,
+    darkColor: Color,
+    creamColor: Color,
+    inkColor: Color,
+    speech: TextLayoutResult?,
+    bubbleFill: Color,
+    bubbleInk: Color,
+    bubbleBorder: Color,
+) {
+    val headR = 7.dp.toPx()
+    val headCenter = Offset(x, groundY - 25.dp.toPx())
+
+    // Хвост.
+    val tail = Path().apply {
+        moveTo(x + 8.dp.toPx(), groundY - 8.dp.toPx())
+        cubicTo(
+            x + 18.dp.toPx(),
+            groundY - 10.dp.toPx(),
+            x + 20.dp.toPx(),
+            groundY - 22.dp.toPx(),
+            x + 13.dp.toPx(),
+            groundY - 26.dp.toPx(),
+        )
+    }
+    drawPath(tail, darkColor, style = Stroke(3.dp.toPx(), cap = StrokeCap.Round))
+
+    // Тело, грудь и лапы.
+    drawOval(
+        color = bodyColor,
+        topLeft = Offset(x - 9.dp.toPx(), groundY - 20.dp.toPx()),
+        size = Size(18.dp.toPx(), 20.dp.toPx()),
+    )
+    drawOval(
+        color = creamColor.copy(alpha = 0.9f),
+        topLeft = Offset(x - 4.dp.toPx(), groundY - 15.dp.toPx()),
+        size = Size(8.dp.toPx(), 12.dp.toPx()),
+    )
+    drawOval(
+        color = bodyColor,
+        topLeft = Offset(x - 8.dp.toPx(), groundY - 4.dp.toPx()),
+        size = Size(7.dp.toPx(), 4.dp.toPx()),
+    )
+    drawOval(
+        color = bodyColor,
+        topLeft = Offset(x + 1.dp.toPx(), groundY - 4.dp.toPx()),
+        size = Size(7.dp.toPx(), 4.dp.toPx()),
+    )
+
+    // Висячие уши — главный признак собаки.
+    drawOval(
+        color = darkColor,
+        topLeft = Offset(x - headR * 1.55f, headCenter.y - headR * 0.55f),
+        size = Size(headR * 0.78f, headR * 1.75f),
+    )
+    drawOval(
+        color = darkColor,
+        topLeft = Offset(x + headR * 0.77f, headCenter.y - headR * 0.55f),
+        size = Size(headR * 0.78f, headR * 1.75f),
+    )
+    drawCircle(bodyColor, headR, headCenter)
+
+    // Морда, глаза и нос.
+    drawOval(
+        color = creamColor,
+        topLeft = Offset(x - headR * 0.62f, headCenter.y + headR * 0.02f),
+        size = Size(headR * 1.24f, headR * 0.95f),
+    )
+    drawCircle(
+        color = inkColor,
+        radius = 0.8.dp.toPx(),
+        center = Offset(x - headR * 0.40f, headCenter.y - headR * 0.18f),
+    )
+    drawCircle(
+        color = inkColor,
+        radius = 0.8.dp.toPx(),
+        center = Offset(x + headR * 0.40f, headCenter.y - headR * 0.18f),
+    )
+    drawOval(
+        color = inkColor,
+        topLeft = Offset(x - headR * 0.20f, headCenter.y + headR * 0.12f),
+        size = Size(headR * 0.40f, headR * 0.30f),
+    )
+    // Высунутый язык: губы и правда холодные.
+    drawOval(
+        color = Color(0xFFD97A7A),
+        topLeft = Offset(x - headR * 0.16f, headCenter.y + headR * 0.34f),
+        size = Size(headR * 0.32f, headR * 0.34f),
+    )
+
+    if (speech == null) return
+
+    // Облачко с репликой над головой.
+    val padH = 5.dp.toPx()
+    val padV = 3.dp.toPx()
+    val bubbleWidth = speech.size.width + padH * 2f
+    val bubbleHeight = speech.size.height + padV * 2f
+    val maxLeft = (size.width - bubbleWidth - 2.dp.toPx()).coerceAtLeast(2.dp.toPx())
+    val bubbleLeft = (x - bubbleWidth / 2f).coerceIn(2.dp.toPx(), maxLeft)
+    val bubbleTop = headCenter.y - headR - bubbleHeight - 9.dp.toPx()
+    drawRoundRect(
+        color = bubbleFill,
+        topLeft = Offset(bubbleLeft, bubbleTop),
+        size = Size(bubbleWidth, bubbleHeight),
+        cornerRadius = CornerRadius(6.dp.toPx()),
+    )
+    drawRoundRect(
+        color = bubbleBorder,
+        topLeft = Offset(bubbleLeft, bubbleTop),
+        size = Size(bubbleWidth, bubbleHeight),
+        cornerRadius = CornerRadius(6.dp.toPx()),
+        style = Stroke(1.dp.toPx()),
+    )
+    val tailX = x.coerceIn(
+        bubbleLeft + 6.dp.toPx(),
+        bubbleLeft + bubbleWidth - 6.dp.toPx(),
+    )
+    val bubbleTail = Path().apply {
+        moveTo(tailX - 2.5.dp.toPx(), bubbleTop + bubbleHeight)
+        lineTo(tailX + 2.5.dp.toPx(), bubbleTop + bubbleHeight)
+        lineTo(tailX, bubbleTop + bubbleHeight + 4.dp.toPx())
+        close()
+    }
+    drawPath(bubbleTail, bubbleFill)
+    drawText(
+        textLayoutResult = speech,
+        topLeft = Offset(bubbleLeft + padH, bubbleTop + padV),
     )
 }
 

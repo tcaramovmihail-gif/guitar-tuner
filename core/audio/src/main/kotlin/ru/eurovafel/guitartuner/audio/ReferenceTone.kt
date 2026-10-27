@@ -22,10 +22,20 @@ class ReferenceTone(
 
     /** @return true, если тон удалось запустить. */
     fun play(frequency: Double, seconds: Double = 2.0): Boolean {
-        stop()
         if (frequency <= 0.0 || seconds <= 0.0) return false
+        return playSamples(ToneSynth.pluck(frequency, sampleRate, seconds), seconds)
+    }
 
-        val samples = ToneSynth.pluck(frequency, sampleRate, seconds)
+    /** Проигрывает аккорд: струны входят одна за другой, как при переборе. */
+    fun playChord(frequencies: List<Double>, seconds: Double = 2.2): Boolean {
+        if (frequencies.isEmpty() || seconds <= 0.0) return false
+        return playSamples(ChordSynth.strum(frequencies, sampleRate, seconds), seconds)
+    }
+
+    private fun playSamples(samples: FloatArray, seconds: Double): Boolean {
+        stop()
+        if (samples.isEmpty()) return false
+
         val audioTrack = runCatching { createTrack(samples.size) }.getOrNull() ?: return false
 
         return runCatching {

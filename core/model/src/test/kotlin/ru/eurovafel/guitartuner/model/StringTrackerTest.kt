@@ -80,6 +80,35 @@ class StringTrackerTest {
     }
 
     @Test
+    fun `harmonic ancestor switches faster than a normal string`() {
+        val tracker = StringTracker(acquireFrames = 1, switchFrames = 8, ancestorFrames = 2)
+        assertEquals(64, tracker.update(guitar, 64)) // high E
+
+        // A2 — не «подструна» E4, а его гармоника: E4 = 3×A2.
+        assertEquals(64, tracker.update(guitar, 45))
+        assertEquals(45, tracker.update(guitar, 45))
+    }
+
+    @Test
+    fun `unrelated string still waits for the switch window`() {
+        val tracker = StringTracker(acquireFrames = 1, switchFrames = 4, ancestorFrames = 2)
+        assertEquals(40, tracker.update(guitar, 40))
+
+        repeat(3) { assertEquals(40, tracker.update(guitar, 45)) }
+        assertEquals(45, tracker.update(guitar, 45))
+    }
+
+    @Test
+    fun `new pluck switches to another string in three frames`() {
+        val tracker = StringTracker(acquireFrames = 2, switchFrames = 12)
+        repeat(2) { tracker.update(guitar, 40) }
+
+        assertEquals(40, tracker.update(guitar, 50, fastSwitch = true))
+        assertEquals(40, tracker.update(guitar, 50, fastSwitch = true))
+        assertEquals(50, tracker.update(guitar, 50, fastSwitch = true))
+    }
+
+    @Test
     fun `note outside open strings does not change active string`() {
         val tracker = StringTracker(acquireFrames = 1, switchFrames = 2)
         assertEquals(40, tracker.update(guitar, 40))

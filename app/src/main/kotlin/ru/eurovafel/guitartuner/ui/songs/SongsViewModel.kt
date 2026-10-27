@@ -21,9 +21,10 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import ru.eurovafel.guitartuner.catalog.AmDmClient
+import ru.eurovafel.guitartuner.catalog.CatalogSource
 import ru.eurovafel.guitartuner.catalog.RemoteArtist
 import ru.eurovafel.guitartuner.catalog.RemoteSong
+import ru.eurovafel.guitartuner.catalog.SongCatalog
 import ru.eurovafel.guitartuner.data.Song
 import ru.eurovafel.guitartuner.data.SongRepository
 import ru.eurovafel.guitartuner.data.songKey
@@ -59,8 +60,12 @@ data class SongsUiState(
     val savedKeys: Set<String> = emptySet(),
     val savedUrls: Set<String> = emptySet(),
     val openedArtist: String? = null,
+    val favoritesOpen: Boolean = false,
+    val selectionMode: Boolean = false,
+    val selectedIds: Set<String> = emptySet(),
     val localQuery: String = "",
     val query: String = "",
+    val source: CatalogSource = CatalogSource.AMDM,
     val searching: Boolean = false,
     val searched: Boolean = false,
     val remoteSongs: List<RemoteSong> = emptyList(),
@@ -72,6 +77,14 @@ data class SongsUiState(
 ) {
     val openedFolder: ArtistFolder?
         get() = artists.firstOrNull { it.artist == openedArtist }
+
+    /** Песни с сердечком — отдельная папка «Избранное». */
+    val favorites: List<Song>
+        get() = songs
+            .filter { it.favorite }
+            .sortedWith(compareBy({ it.artist.lowercase() }, { it.title.lowercase() }))
+
+    val selectedCount: Int get() = selectedIds.size
 
     /** Совпадения по уже сохранённым песням: поиск идёт без сети. */
     val localMatches: List<Song>
@@ -95,7 +108,7 @@ data class SongsUiState(
 class SongsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = SongRepository(application)
-    private val client = AmDmClient()
+    private val client = SongCatalog()
 
     private val _state = MutableStateFlow(SongsUiState())
     val state: StateFlow<SongsUiState> = _state.asStateFlow()
@@ -121,6 +134,7 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.songs.collect { songs ->
                 _state.update { current ->
+                    val existingIds = songs.mapTo(HashSet()) { it.id }
                     current.copy(
                         loading = false,
                         songs = songs,
@@ -134,6 +148,7 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
                             .sortedBy { it.artist.lowercase() },
                         savedKeys = songs.map { it.songKey() }.toSet(),
                         savedUrls = songs.mapNotNull { it.sourceUrl }.toSet(),
+                        selectedIds = current.selectedIds.filterTo(HashSet()) { it in existingIds },
                     )
                 }
             }
@@ -153,15 +168,32 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(query = query) }
     }
 
+    /** Смена источника очищает прошлые результаты: они от другого сайта. */
+    fun selectSource(source: CatalogSource) {
+        if (_state.value.source == source) return
+        searchJob?.cancel()
+        _state.update {
+            it.copy(
+                source = source,
+                searching = false,
+                searched = false,
+                remoteSongs = emptyList(),
+                remoteArtists = emptyList(),
+            )
+        }
+    }
+
     fun search() {
-        val query = _state.value.query.trim()
+        val state = _state.value
+        val query = state.query.trim()
         if (query.isEmpty()) return
+        val source = state.source
 
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             _state.update { it.copy(searching = true, searched = true, error = null) }
             val result = withContext(Dispatchers.IO) {
-                runCatching { client.search(query) }
+                runCatching { client.search(query, source) }
             }
             result.onSuccess { searchResult ->
                 _state.update {
@@ -198,11 +230,99 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openArtist(artist: String) {
-        _state.update { it.copy(openedArtist = artist, localQuery = "") }
+        _state.update {
+            it.copy(
+                openedArtist = artist,
+                favoritesOpen = false,
+                localQuery = "",
+                selectionMode = false,
+                selectedIds = emptySet(),
+            )
+        }
     }
 
     fun closeArtist() {
-        _state.update { it.copy(openedArtist = null) }
+        _state.update {
+            it.copy(openedArtist = null, selectionMode = false, selectedIds = emptySet())
+        }
+    }
+
+    fun openFavorites() {
+        _state.update {
+            it.copy(
+                openedArtist = null,
+                favoritesOpen = true,
+                localQuery = "",
+                selectionMode = false,
+                selectedIds = emptySet(),
+            )
+        }
+    }
+
+    fun closeFavorites() {
+        _state.update {
+            it.copy(favoritesOpen = false, selectionMode = false, selectedIds = emptySet())
+        }
+    }
+
+    /** Сердечко в карточке: песня сразу появляется в папке «Избранное». */
+    fun toggleFavorite(song: Song) {
+        viewModelScope.launch {
+            runCatching { repository.setFavorite(song.id, !song.favorite) }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(error = "Не удалось изменить избранное: ${error.userMessage()}")
+                    }
+                }
+        }
+    }
+
+    fun setSelectionMode(enabled: Boolean) {
+        _state.update {
+            it.copy(selectionMode = enabled, selectedIds = if (enabled) it.selectedIds else emptySet())
+        }
+    }
+
+    fun toggleSelected(song: Song) {
+        _state.update { current ->
+            val selected = current.selectedIds.toMutableSet()
+            if (!selected.add(song.id)) selected.remove(song.id)
+            current.copy(
+                selectionMode = true,
+                selectedIds = selected,
+            )
+        }
+    }
+
+    fun selectAll(songs: List<Song>) {
+        _state.update { it.copy(selectionMode = true, selectedIds = songs.mapTo(HashSet()) { song -> song.id }) }
+    }
+
+    fun clearSelection() {
+        _state.update { it.copy(selectedIds = emptySet()) }
+    }
+
+    /** Групповое удаление выбранных песен — только после подтверждения в UI. */
+    fun deleteSelected() {
+        val ids = _state.value.selectedIds
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            runCatching { repository.deleteAll(ids) }
+                .onSuccess {
+                    _state.update {
+                        it.copy(
+                            selectionMode = false,
+                            selectedIds = emptySet(),
+                            message = "Удалено: ${ids.size}",
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(error = "Не удалось удалить: ${error.userMessage()}")
+                    }
+                }
+        }
     }
 
     /**
@@ -289,6 +409,23 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
 
     fun consumeError() {
         _state.update { it.copy(error = null) }
+    }
+
+    /** Удаление из локальной библиотеки: папка и поиск обновятся сами. */
+    fun deleteSong(song: Song) {
+        viewModelScope.launch {
+            runCatching { repository.delete(song.id) }
+                .onSuccess {
+                    _state.update {
+                        it.copy(message = "Удалено: ${song.title}")
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(error = "Не удалось удалить: ${error.userMessage()}")
+                    }
+                }
+        }
     }
 
     private fun startImport(artists: List<RemoteArtist>) {

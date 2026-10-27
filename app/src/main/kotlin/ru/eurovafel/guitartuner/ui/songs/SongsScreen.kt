@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,7 +24,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -51,9 +55,11 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ru.eurovafel.guitartuner.catalog.CatalogSource
 import ru.eurovafel.guitartuner.catalog.RemoteArtist
 import ru.eurovafel.guitartuner.catalog.RemoteSong
 import ru.eurovafel.guitartuner.data.Song
+import ru.eurovafel.guitartuner.model.ChordTransposer
 
 @Composable
 fun SongsScreen(
@@ -66,6 +72,8 @@ fun SongsScreen(
 
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showImportDialog by rememberSaveable { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<Song?>(null) }
+    var pendingBulkDelete by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.message) {
         state.message?.let { message ->
@@ -80,8 +88,16 @@ fun SongsScreen(
         }
     }
 
-    BackHandler(enabled = tab == 0 && state.openedArtist != null) {
-        viewModel.closeArtist()
+    BackHandler(
+        enabled = tab == 0 &&
+            (state.selectionMode || state.openedArtist != null || state.favoritesOpen),
+    ) {
+        when {
+            // Сначала выходим из режима выбора, чтобы случайно не закрыть папку.
+            state.selectionMode -> viewModel.setSelectionMode(false)
+            state.favoritesOpen -> viewModel.closeFavorites()
+            else -> viewModel.closeArtist()
+        }
     }
 
     Box(Modifier.fillMaxSize().testTag("songs_screen")) {
@@ -120,14 +136,24 @@ fun SongsScreen(
                         state = state,
                         onOpenArtist = viewModel::openArtist,
                         onCloseArtist = viewModel::closeArtist,
+                        onOpenFavorites = viewModel::openFavorites,
+                        onCloseFavorites = viewModel::closeFavorites,
                         onOpenSong = onOpenSong,
                         onShowImportDialog = { showImportDialog = true },
                         onLocalQueryChange = viewModel::onLocalQueryChange,
                         onClearLocalQuery = viewModel::clearLocalQuery,
+                        onDeleteSong = { pendingDelete = it },
+                        onToggleFavorite = viewModel::toggleFavorite,
+                        onToggleSelected = viewModel::toggleSelected,
+                        onSetSelectionMode = viewModel::setSelectionMode,
+                        onSelectAll = viewModel::selectAll,
+                        onClearSelection = viewModel::clearSelection,
+                        onDeleteSelected = { pendingBulkDelete = true },
                     )
                     else -> OnlineContent(
                         state = state,
                         onQueryChange = viewModel::onQueryChange,
+                        onSelectSource = viewModel::selectSource,
                         onSearch = {
                             keyboard?.hide()
                             viewModel.search()
@@ -180,6 +206,63 @@ fun SongsScreen(
             },
         )
     }
+
+    pendingDelete?.let { song ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Удалить песню?") },
+            text = {
+                Text(
+                    "«${song.title}» исчезнет из песенника и поиска. " +
+                        "Её можно снова найти в онлайн-каталоге.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDelete = null
+                    viewModel.deleteSong(song)
+                }) {
+                    Text("Удалить")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) {
+                    Text("Отмена")
+                }
+            },
+        )
+    }
+
+    if (pendingBulkDelete) {
+        val count = state.selectedIds.size
+        AlertDialog(
+            onDismissRequest = { pendingBulkDelete = false },
+            title = { Text("Удалить выбранные песни?") },
+            text = {
+                Text(
+                    if (count == 1) {
+                        "Одна песня исчезнет из песенника и поиска."
+                    } else {
+                        "Из песенника исчезнут $count песен. Их можно снова найти " +
+                            "в онлайн-каталоге."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingBulkDelete = false
+                    viewModel.deleteSelected()
+                }) {
+                    Text("Удалить")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingBulkDelete = false }) {
+                    Text("Отмена")
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -194,13 +277,31 @@ private fun MySongsContent(
     state: SongsUiState,
     onOpenArtist: (String) -> Unit,
     onCloseArtist: () -> Unit,
+    onOpenFavorites: () -> Unit,
+    onCloseFavorites: () -> Unit,
     onOpenSong: (Song) -> Unit,
     onShowImportDialog: () -> Unit,
     onLocalQueryChange: (String) -> Unit,
     onClearLocalQuery: () -> Unit,
+    onDeleteSong: (Song) -> Unit,
+    onToggleFavorite: (Song) -> Unit,
+    onToggleSelected: (Song) -> Unit,
+    onSetSelectionMode: (Boolean) -> Unit,
+    onSelectAll: (List<Song>) -> Unit,
+    onClearSelection: () -> Unit,
+    onDeleteSelected: () -> Unit,
 ) {
     val folder = state.openedFolder
-    if (folder == null) {
+    val favoritesOpen = state.favoritesOpen
+    val listSongs = when {
+        folder != null -> folder.songs
+        favoritesOpen -> state.favorites
+        else -> emptyList()
+    }
+    val listMode = folder != null || favoritesOpen
+    val selectionMode = state.selectionMode && listMode
+
+    if (!listMode) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
@@ -210,6 +311,12 @@ private fun MySongsContent(
                 Text(
                     text = "Мои песни",
                     style = MaterialTheme.typography.headlineMedium,
+                )
+            }
+            item {
+                FavoriteFolderCard(
+                    count = state.favorites.size,
+                    onClick = onOpenFavorites,
                 )
             }
             item {
@@ -248,6 +355,8 @@ private fun MySongsContent(
                             song = song,
                             showArtist = true,
                             onClick = { onOpenSong(song) },
+                            onDelete = { onDeleteSong(song) },
+                            onToggleFavorite = { onToggleFavorite(song) },
                         )
                     }
                 }
@@ -282,31 +391,165 @@ private fun MySongsContent(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = onCloseArtist) { Text("← Папки") }
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = folder.artist,
-                            style = MaterialTheme.typography.titleLarge,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = songsCount(folder.songs.size),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                ListHeader(
+                    title = if (favoritesOpen) "Избранное" else folder?.artist.orEmpty(),
+                    subtitle = songsCount(listSongs.size),
+                    selectionMode = selectionMode,
+                    canSelect = listSongs.isNotEmpty(),
+                    onBack = if (favoritesOpen) onCloseFavorites else onCloseArtist,
+                    onToggleSelection = {
+                        onSetSelectionMode(!selectionMode)
+                    },
+                )
+                if (selectionMode) {
+                    SelectionActions(
+                        selectedCount = state.selectedIds.size,
+                        totalCount = listSongs.size,
+                        onSelectAll = { onSelectAll(listSongs) },
+                        onClearSelection = onClearSelection,
+                        onDeleteSelected = onDeleteSelected,
+                    )
                 }
                 HorizontalDivider(Modifier.padding(top = 4.dp, bottom = 4.dp))
             }
 
-            items(folder.songs, key = { it.id }) { song ->
-                LibrarySongCard(song = song, onClick = { onOpenSong(song) })
+            if (listSongs.isEmpty()) {
+                item {
+                    Text(
+                        text = if (favoritesOpen) {
+                            "Пока нет любимых песен. Нажмите ♡ в карточке песни — " +
+                                "она появится здесь."
+                        } else {
+                            "В этой папке нет песен."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("songs_list_empty"),
+                    )
+                }
+            } else {
+                items(listSongs, key = { it.id }) { song ->
+                    LibrarySongCard(
+                        song = song,
+                        showArtist = favoritesOpen,
+                        selectionMode = selectionMode,
+                        selected = song.id in state.selectedIds,
+                        onClick = {
+                            if (selectionMode) onToggleSelected(song) else onOpenSong(song)
+                        },
+                        onDelete = { onDeleteSong(song) },
+                        onToggleFavorite = { onToggleFavorite(song) },
+                    )
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun FavoriteFolderCard(count: Int, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag("songs_favorites"),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "♥",
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "Избранное",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = songsCount(count),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text("›", style = MaterialTheme.typography.headlineSmall)
+        }
+    }
+}
+
+@Composable
+private fun ListHeader(
+    title: String,
+    subtitle: String,
+    selectionMode: Boolean,
+    canSelect: Boolean,
+    onBack: () -> Unit,
+    onToggleSelection: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TextButton(onClick = onBack) { Text("← Папки") }
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (canSelect) {
+            TextButton(
+                onClick = onToggleSelection,
+                modifier = Modifier.testTag("songs_selection_toggle"),
+            ) {
+                Text(if (selectionMode) "Готово" else "Выбрать")
+            }
+        }
+    }
+}
+
+/** Панель группового удаления: появляется только в режиме выбора. */
+@Composable
+private fun SelectionActions(
+    selectedCount: Int,
+    totalCount: Int,
+    onSelectAll: () -> Unit,
+    onClearSelection: () -> Unit,
+    onDeleteSelected: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("songs_selection_actions"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = "Выбрано: $selectedCount",
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(
+            onClick = if (selectedCount == totalCount) onClearSelection else onSelectAll,
+        ) {
+            Text(if (selectedCount == totalCount) "Снять" else "Выбрать все")
+        }
+        Button(
+            onClick = onDeleteSelected,
+            enabled = selectedCount > 0,
+            modifier = Modifier.testTag("songs_delete_selected"),
+        ) {
+            Text("Удалить")
         }
     }
 }
@@ -405,45 +648,102 @@ private fun ArtistFolderCard(folder: ArtistFolder, onClick: () -> Unit) {
 private fun LibrarySongCard(
     song: Song,
     onClick: () -> Unit,
+    onDelete: () -> Unit,
+    onToggleFavorite: () -> Unit,
     showArtist: Boolean = false,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
 ) {
+    val key = remember(song.id, song.key, song.chords) {
+        song.key ?: ChordTransposer.detectKey(song.chords)
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .testTag("songs_song_${song.id}"),
+        colors = if (selected) {
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            )
+        } else {
+            CardDefaults.cardColors()
+        },
     ) {
-        Column(Modifier.padding(16.dp)) {
-            if (showArtist) {
+        Row(
+            modifier = Modifier.padding(
+                start = if (selectionMode) 4.dp else 16.dp,
+                top = 12.dp,
+                bottom = 12.dp,
+                end = 4.dp,
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (selectionMode) {
+                Checkbox(
+                    checked = selected,
+                    onCheckedChange = { onClick() },
+                    modifier = Modifier.testTag("songs_checkbox_${song.id}"),
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                if (showArtist) {
+                    Text(
+                        text = song.artist,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(song.title, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    text = song.artist,
+                    text = buildString {
+                        append(song.bpm)
+                        append(" BPM")
+                        key?.let {
+                            append(" · ")
+                            append(it)
+                        }
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Text(song.title, style = MaterialTheme.typography.titleMedium)
-            Text(
-                text = buildString {
-                    append(song.bpm)
-                    append(" BPM")
-                    song.key?.let {
-                        append(" · ")
-                        append(it)
-                    }
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (!selectionMode) {
+                TextButton(
+                    onClick = onToggleFavorite,
+                    modifier = Modifier.testTag("songs_favorite_${song.id}"),
+                ) {
+                    Text(
+                        text = if (song.favorite) "♥" else "♡",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = if (song.favorite) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+                TextButton(
+                    onClick = onDelete,
+                    modifier = Modifier.testTag("songs_delete_${song.id}"),
+                ) {
+                    Text("Удалить")
+                }
+            }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun OnlineContent(
     state: SongsUiState,
     onQueryChange: (String) -> Unit,
+    onSelectSource: (CatalogSource) -> Unit,
     onSearch: () -> Unit,
     onClearSearch: () -> Unit,
     onOpenRemote: (RemoteSong) -> Unit,
@@ -456,6 +756,31 @@ private fun OnlineContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Где искать",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    CatalogSource.entries.forEach { source ->
+                        FilterChip(
+                            selected = state.source == source,
+                            onClick = { onSelectSource(source) },
+                            label = { Text(source.title) },
+                            enabled = !state.searching,
+                            modifier = Modifier.testTag("songs_source_${source.name}"),
+                        )
+                    }
+                }
+            }
+        }
+
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -496,7 +821,14 @@ private fun OnlineContent(
 
         if (state.searching) {
             item {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text(
+                        text = "Ищу на ${state.source.title}…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 
@@ -512,7 +844,8 @@ private fun OnlineContent(
         ) {
             item {
                 Text(
-                    text = "Ничего не найдено. Попробуйте другое название или исполнителя.",
+                    text = "На ${state.source.title} ничего не найдено. Попробуйте другое " +
+                        "название, исполнителя или другой источник.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -520,7 +853,7 @@ private fun OnlineContent(
         }
 
         if (state.remoteArtists.isNotEmpty()) {
-            item { SectionTitle("Исполнители") }
+            item { SectionTitle("Исполнители · ${state.source.title}") }
             items(state.remoteArtists, key = { it.url }) { artist ->
                 RemoteArtistCard(
                     artist = artist,
@@ -531,7 +864,7 @@ private fun OnlineContent(
         }
 
         if (state.remoteSongs.isNotEmpty()) {
-            item { SectionTitle("Песни") }
+            item { SectionTitle("Песни · ${state.source.title}") }
             items(state.remoteSongs, key = { it.url }) { remote ->
                 RemoteSongCard(
                     remote = remote,
@@ -628,7 +961,7 @@ private fun RemoteSongCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = remote.artist,
+                text = "${remote.artist} · ${remote.sourceName}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

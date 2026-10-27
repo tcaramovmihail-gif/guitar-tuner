@@ -17,8 +17,8 @@ object AmDmParser {
 
     const val BASE_URL = "https://496.amdm.ru"
 
-    fun parseSearchSongs(html: String): List<RemoteSong> {
-        val document = Jsoup.parse(html, BASE_URL)
+    fun parseSearchSongs(html: String, baseUrl: String = BASE_URL): List<RemoteSong> {
+        val document = Jsoup.parse(html, baseUrl)
         val songs = document.select("table.items tr").mapNotNull { row ->
             val links = row.select("td.artist_name a.artist")
             if (links.size < 2) return@mapNotNull null
@@ -27,22 +27,22 @@ object AmDmParser {
             val songLink = links[1]
             val artist = artistLink.text().trim()
             val title = songLink.text().trim()
-            val url = absolutize(songLink, BASE_URL)
+            val url = absolutize(songLink, baseUrl)
             if (artist.isEmpty() || title.isEmpty() || url.isEmpty()) return@mapNotNull null
 
             RemoteSong(
                 title = title,
                 artist = artist,
                 url = url,
-                artistUrl = absolutize(artistLink, BASE_URL),
+                artistUrl = absolutize(artistLink, baseUrl),
                 verified = row.selectFirst("span.fa-check-circle") != null,
             )
         }
         return bestVersions(songs)
     }
 
-    fun parseArtistSearch(html: String): List<RemoteArtist> {
-        val document = Jsoup.parse(html, BASE_URL)
+    fun parseArtistSearch(html: String, baseUrl: String = BASE_URL): List<RemoteArtist> {
+        val document = Jsoup.parse(html, baseUrl)
         return document.select("table.items tr")
             .mapNotNull { row ->
                 val link = row.selectFirst("td.artist_name a.artist") ?: return@mapNotNull null
@@ -56,7 +56,7 @@ object AmDmParser {
 
                 RemoteArtist(
                     name = name,
-                    url = absolutize(link, BASE_URL),
+                    url = absolutize(link, baseUrl),
                     songCount = count,
                 )
             }
@@ -66,8 +66,9 @@ object AmDmParser {
     fun parseArtistSongs(
         html: String,
         fallbackArtistUrl: String? = null,
+        baseUrl: String = BASE_URL,
     ): ArtistSongs {
-        val document = Jsoup.parse(html, BASE_URL)
+        val document = Jsoup.parse(html, baseUrl)
         val artist = document.selectFirst("div.artist-profile__info h1")
             ?.text()
             ?.trim()
@@ -80,7 +81,7 @@ object AmDmParser {
         val songs = rows.mapNotNull { row ->
             val link = row.selectFirst("a.g-link") ?: return@mapNotNull null
             val title = link.text().trim()
-            val url = absolutize(link, BASE_URL)
+            val url = absolutize(link, baseUrl)
             if (title.isEmpty() || url.isEmpty()) return@mapNotNull null
 
             RemoteSong(
@@ -104,8 +105,12 @@ object AmDmParser {
         )
     }
 
-    fun parseSong(html: String, sourceUrl: String): SongPage? {
-        val document = Jsoup.parse(html, BASE_URL)
+    fun parseSong(
+        html: String,
+        sourceUrl: String,
+        baseUrl: String = BASE_URL,
+    ): SongPage? {
+        val document = Jsoup.parse(html, baseUrl)
         val artist = document.selectFirst("span[itemprop=byArtist]")?.text()?.trim()
             .orEmpty()
             .ifEmpty { titleParts(document)?.first.orEmpty() }
