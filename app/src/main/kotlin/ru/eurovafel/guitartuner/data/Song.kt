@@ -14,6 +14,12 @@ data class Song(
     val sourceUrl: String? = null,
     val savedAt: Long = 0L,
     val favorite: Boolean = false,
+    /** Откуда пришёл подбор: AmDm, 5Lad, «Своя». */
+    val source: String? = null,
+    /** Когда песня последний раз звучала — для сортировки «Недавние». */
+    val lastPlayedAt: Long = 0L,
+    /** Сколько раз нажимали «Играть» — для сортировки «Часто играю». */
+    val playCount: Int = 0,
 )
 
 /** Ключ для сравнения песен без учёта регистра и лишних пробелов. */

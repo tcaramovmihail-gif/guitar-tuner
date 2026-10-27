@@ -33,6 +33,8 @@ data class TunerUiState(
     val detectedStringMidi: Int? = null,
     val stableCapture: Boolean = true,
     val celebrating: Boolean = false,
+    /** Струны, которые уже побывали в строю за текущий сеанс. */
+    val tunedMidi: Set<Int> = emptySet(),
     val error: String? = null,
 ) {
     /** Струна, по которой идёт настройка: ручной выбор важнее автоопределения. */
@@ -153,6 +155,7 @@ class TunerViewModel : ViewModel() {
                 manualStringMidi = null,
                 detectedStringMidi = null,
                 celebrating = false,
+                tunedMidi = emptySet(),
             )
         }
     }
@@ -227,8 +230,7 @@ class TunerViewModel : ViewModel() {
         }
     }
 
-    fun setA4(a4: Double) {
-        val clamped = a4.coerceIn(MIN_A4, MAX_A4)
+    fun setA4(a4: Double) {        val clamped = a4.coerceIn(MIN_A4, MAX_A4)
         referenceTone.stop()
         resetCelebration()
         _state.update { current ->
@@ -365,6 +367,12 @@ class TunerViewModel : ViewModel() {
         }
         // Тишина/затухание — прогресс замирает, а не сбрасывается.
         inTuneHold.accept(cents)
+        val tuned = _state.value.tunedMidi
+        val updatedTuned = if (inTuneHold.celebrating && activeMidi != null) {
+            tuned + activeMidi
+        } else {
+            tuned
+        }
 
         _state.update {
             it.copy(
@@ -374,8 +382,15 @@ class TunerViewModel : ViewModel() {
                 autoStringMidi = autoString,
                 detectedStringMidi = detectedString,
                 celebrating = inTuneHold.celebrating,
+                tunedMidi = updatedTuned,
             )
         }
+    }
+
+    /** Сброс галочек «настроена» — начать круг заново. */
+    fun resetTuned() {
+        _state.update { it.copy(tunedMidi = emptySet(), celebrating = false) }
+        resetCelebration()
     }
 
     /**

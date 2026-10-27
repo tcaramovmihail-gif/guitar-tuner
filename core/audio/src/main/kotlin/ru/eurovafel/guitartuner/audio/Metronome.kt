@@ -25,13 +25,22 @@ enum class MetronomeSound {
  */
 class Metronome(
     private val sampleRate: Int = 48_000,
-    private val beatsPerBar: Int = 4,
+    beatsPerBar: Int = 4,
+    onBeat: ((Int) -> Unit)? = null,
 ) {
     @Volatile
     private var running = false
 
     @Volatile
     private var bpm: Int = 90
+
+    /** Размер такта: первая доля звучит с акцентом. */
+    @Volatile
+    private var beatsPerBar: Int = beatsPerBar.coerceIn(1, 12)
+
+    /** Колбэк каждой доли: индекс от 0. Нужен для визуального пульса. */
+    @Volatile
+    private var beatListener: ((Int) -> Unit)? = onBeat
 
     @Volatile
     private var sound: MetronomeSound = MetronomeSound.CLICK
@@ -64,6 +73,16 @@ class Metronome(
     /** Смена звука применяется со следующей доли, без перезапуска. */
     fun setSound(value: MetronomeSound) {
         sound = value
+    }
+
+    /** Размер такта 2/4, 3/4, 4/4… Акцент переедет на новую первую долю. */
+    fun setBeatsPerBar(value: Int) {
+        beatsPerBar = value.coerceIn(1, 12)
+    }
+
+    /** Слушатель долей вызывается из аудиопотока — UI должен сам перейти в main. */
+    fun setOnBeat(listener: ((Int) -> Unit)?) {
+        beatListener = listener
     }
 
     /** Смена барабанного рисунка применяется со следующей доли. */
@@ -125,13 +144,17 @@ class Metronome(
             val beatNanos = 60_000_000_000L / bpm
             val buffer = when (currentSound) {
                 MetronomeSound.CLICK -> {
-                    val value = if (clickBeat == 0) accentKnock else normalKnock
-                    clickBeat = (clickBeat + 1) % beatsPerBar
+                    val beat = clickBeat
+                    val value = if (beat == 0) accentKnock else normalKnock
+                    clickBeat = (beat + 1) % beatsPerBar
+                    notifyBeat(beat)
                     value
                 }
                 MetronomeSound.DRUM -> {
                     val steps = drumSteps.getValue(pattern)
                     val value = steps[drumStep % steps.size]
+                    // Тарелка/бочка идут восьмыми, пульс показываем по четвертям.
+                    if (drumStep % 2 == 0) notifyBeat((drumStep / 2) % beatsPerBar)
                     drumStep = (drumStep + 1) % steps.size
                     value
                 }
@@ -152,6 +175,11 @@ class Metronome(
                 nextBeatNanos = now + intervalNanos
             }
         }
+    }
+
+    private fun notifyBeat(index: Int) {
+        val listener = beatListener ?: return
+        runCatching { listener(index) }
     }
 
     private fun createTrack(): AudioTrack {

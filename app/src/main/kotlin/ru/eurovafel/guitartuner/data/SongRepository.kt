@@ -59,6 +59,16 @@ class SongRepository(context: Context) {
         _songs.value = database.readAll()
     }
 
+    suspend fun updateBpm(id: String, bpm: Int) = withContext(Dispatchers.IO) {
+        database.updateBpm(id, bpm)
+        _songs.value = database.readAll()
+    }
+
+    suspend fun markPlayed(id: String) = withContext(Dispatchers.IO) {
+        database.markPlayed(id, System.currentTimeMillis())
+        _songs.value = database.readAll()
+    }
+
     fun snapshot(): List<Song> = _songs.value
 
     private companion object {

@@ -25,7 +25,10 @@ class SongDatabase(context: Context) : SQLiteOpenHelper(
                 song_key TEXT,
                 source_url TEXT,
                 saved_at INTEGER NOT NULL,
-                favorite INTEGER NOT NULL DEFAULT 0
+                favorite INTEGER NOT NULL DEFAULT 0,
+                source TEXT,
+                last_played_at INTEGER NOT NULL DEFAULT 0,
+                play_count INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent(),
         )
@@ -36,6 +39,11 @@ class SongDatabase(context: Context) : SQLiteOpenHelper(
         // Данные пользователя (импортированные песни) не должны теряться.
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE $TABLE ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")
+        }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE $TABLE ADD COLUMN source TEXT")
+            db.execSQL("ALTER TABLE $TABLE ADD COLUMN last_played_at INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE $TABLE ADD COLUMN play_count INTEGER NOT NULL DEFAULT 0")
         }
     }
 
@@ -59,6 +67,9 @@ class SongDatabase(context: Context) : SQLiteOpenHelper(
             val sourceIndex = cursor.getColumnIndexOrThrow("source_url")
             val savedIndex = cursor.getColumnIndexOrThrow("saved_at")
             val favoriteIndex = cursor.getColumnIndexOrThrow("favorite")
+            val sourceColumn = cursor.getColumnIndexOrThrow("source")
+            val lastPlayedIndex = cursor.getColumnIndexOrThrow("last_played_at")
+            val playCountIndex = cursor.getColumnIndexOrThrow("play_count")
 
             while (cursor.moveToNext()) {
                 songs += Song(
@@ -71,6 +82,9 @@ class SongDatabase(context: Context) : SQLiteOpenHelper(
                     sourceUrl = if (cursor.isNull(sourceIndex)) null else cursor.getString(sourceIndex),
                     savedAt = cursor.getLong(savedIndex),
                     favorite = cursor.getInt(favoriteIndex) != 0,
+                    source = if (cursor.isNull(sourceColumn)) null else cursor.getString(sourceColumn),
+                    lastPlayedAt = cursor.getLong(lastPlayedIndex),
+                    playCount = cursor.getInt(playCountIndex),
                 )
             }
         }
@@ -128,6 +142,20 @@ class SongDatabase(context: Context) : SQLiteOpenHelper(
         writableDatabase.update(TABLE, values, "id = ?", arrayOf(id))
     }
 
+    /** Темп меняется прямо из экрана песни, не перезаписывая остальные поля. */
+    fun updateBpm(id: String, bpm: Int) {
+        val values = ContentValues().apply { put("bpm", bpm) }
+        writableDatabase.update(TABLE, values, "id = ?", arrayOf(id))
+    }
+
+    /** Статистика для сортировки «Недавние» и «Часто играю». */
+    fun markPlayed(id: String, playedAt: Long) {
+        writableDatabase.execSQL(
+            "UPDATE $TABLE SET play_count = play_count + 1, last_played_at = ? WHERE id = ?",
+            arrayOf<Any>(playedAt, id),
+        )
+    }
+
     private fun favoriteOf(id: String): Boolean? =
         readableDatabase.query(
             TABLE,
@@ -163,15 +191,18 @@ class SongDatabase(context: Context) : SQLiteOpenHelper(
         put("source_url", song.sourceUrl)
         put("saved_at", if (song.savedAt > 0) song.savedAt else System.currentTimeMillis())
         put("favorite", if (song.favorite) 1 else 0)
+        put("source", song.source)
+        put("last_played_at", song.lastPlayedAt)
+        put("play_count", song.playCount)
     }
 
     private companion object {
         const val DATABASE_NAME = "songs.db"
-        const val DATABASE_VERSION = 2
+        const val DATABASE_VERSION = 3
         const val TABLE = "songs"
         val COLUMNS = arrayOf(
             "id", "title", "artist", "bpm", "chords", "song_key", "source_url", "saved_at",
-            "favorite",
+            "favorite", "source", "last_played_at", "play_count",
         )
     }
 }

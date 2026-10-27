@@ -3,8 +3,8 @@ package ru.eurovafel.guitartuner.data
 import ru.eurovafel.guitartuner.catalog.SongPage
 import ru.eurovafel.guitartuner.model.ChordTransposer
 
-/** Превращает страницу AmDm в песню библиотеки. */
-fun SongPage.toSong(defaultBpm: Int = 90): Song {
+/** Превращает страницу каталога в песню библиотеки. */
+fun SongPage.toSong(defaultBpm: Int = 90, sourceName: String? = null): Song {
     val cleanArtist = artist.trim().ifEmpty { "Без исполнителя" }
     val cleanTitle = title.trim().ifEmpty { "Без названия" }
     return Song(
@@ -21,5 +21,6 @@ fun SongPage.toSong(defaultBpm: Int = 90): Song {
         key = key ?: ChordTransposer.detectKey(text),
         sourceUrl = sourceUrl,
         savedAt = System.currentTimeMillis(),
+        source = sourceName,
     )
 }

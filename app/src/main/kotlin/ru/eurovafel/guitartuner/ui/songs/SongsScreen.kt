@@ -28,6 +28,8 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -50,21 +52,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ru.eurovafel.guitartuner.R
 import ru.eurovafel.guitartuner.catalog.CatalogSource
 import ru.eurovafel.guitartuner.catalog.RemoteArtist
 import ru.eurovafel.guitartuner.catalog.RemoteSong
 import ru.eurovafel.guitartuner.data.Song
 import ru.eurovafel.guitartuner.model.ChordTransposer
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun SongsScreen(
     viewModel: SongsViewModel,
     onOpenSong: (Song) -> Unit,
+    onAddSong: () -> Unit = {},
+    onEditSong: (Song) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -139,9 +148,13 @@ fun SongsScreen(
                         onOpenFavorites = viewModel::openFavorites,
                         onCloseFavorites = viewModel::closeFavorites,
                         onOpenSong = onOpenSong,
+                        onAddSong = onAddSong,
+                        onEditSong = onEditSong,
                         onShowImportDialog = { showImportDialog = true },
                         onLocalQueryChange = viewModel::onLocalQueryChange,
                         onClearLocalQuery = viewModel::clearLocalQuery,
+                        onSortChange = viewModel::setSort,
+                        onFilterChange = viewModel::setFilter,
                         onDeleteSong = { pendingDelete = it },
                         onToggleFavorite = viewModel::toggleFavorite,
                         onToggleSelected = viewModel::toggleSelected,
@@ -280,9 +293,13 @@ private fun MySongsContent(
     onOpenFavorites: () -> Unit,
     onCloseFavorites: () -> Unit,
     onOpenSong: (Song) -> Unit,
+    onAddSong: () -> Unit,
+    onEditSong: (Song) -> Unit,
     onShowImportDialog: () -> Unit,
     onLocalQueryChange: (String) -> Unit,
     onClearLocalQuery: () -> Unit,
+    onSortChange: (SongSort) -> Unit,
+    onFilterChange: (SongFilter) -> Unit,
     onDeleteSong: (Song) -> Unit,
     onToggleFavorite: (Song) -> Unit,
     onToggleSelected: (Song) -> Unit,
@@ -308,10 +325,29 @@ private fun MySongsContent(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
-                Text(
-                    text = "Мои песни",
-                    style = MaterialTheme.typography.headlineMedium,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Мои песни",
+                        style = MaterialTheme.typography.headlineMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Button(
+                        onClick = onAddSong,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier.testTag("songs_add"),
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_add),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Своя")
+                    }
+                }
             }
             item {
                 FavoriteFolderCard(
@@ -324,6 +360,14 @@ private fun MySongsContent(
                     query = state.localQuery,
                     onQueryChange = onLocalQueryChange,
                     onClear = onClearLocalQuery,
+                )
+            }
+            item {
+                LibraryToolbar(
+                    sort = state.sort,
+                    filter = state.filter,
+                    onSortChange = onSortChange,
+                    onFilterChange = onFilterChange,
                 )
             }
 
@@ -357,6 +401,7 @@ private fun MySongsContent(
                             onClick = { onOpenSong(song) },
                             onDelete = { onDeleteSong(song) },
                             onToggleFavorite = { onToggleFavorite(song) },
+                            onEdit = { onEditSong(song) },
                         )
                     }
                 }
@@ -372,7 +417,10 @@ private fun MySongsContent(
 
                 if (state.artists.isEmpty()) {
                     item {
-                        EmptyLibraryCard(onShowImportDialog = onShowImportDialog)
+                        EmptyLibraryCard(
+                            onShowImportDialog = onShowImportDialog,
+                            onAddSong = onAddSong,
+                        )
                     }
                 } else {
                     items(state.artists, key = { it.artist }) { artistFolder ->
@@ -439,6 +487,7 @@ private fun MySongsContent(
                         },
                         onDelete = { onDeleteSong(song) },
                         onToggleFavorite = { onToggleFavorite(song) },
+                        onEdit = { onEditSong(song) },
                     )
                 }
             }
@@ -458,10 +507,11 @@ private fun FavoriteFolderCard(count: Int, onClick: () -> Unit) {
             modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = "♥",
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.primary,
+            Icon(
+                painter = painterResource(R.drawable.ic_favorite),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(26.dp),
             )
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -475,7 +525,11 @@ private fun FavoriteFolderCard(count: Int, onClick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Text("›", style = MaterialTheme.typography.headlineSmall)
+            Icon(
+                painter = painterResource(R.drawable.ic_chevron_right),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -493,7 +547,15 @@ private fun ListHeader(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextButton(onClick = onBack) { Text("← Папки") }
+        TextButton(onClick = onBack) {
+            Icon(
+                painter = painterResource(R.drawable.ic_back),
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text("Папки")
+        }
         Column(Modifier.weight(1f)) {
             Text(
                 text = title,
@@ -572,19 +634,75 @@ private fun LocalSearchField(
         placeholder = { Text("Название или исполнитель") },
         trailingIcon = {
             if (query.isNotEmpty()) {
-                TextButton(
-                    onClick = onClear,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                ) {
-                    Text("✕")
+                IconButton(onClick = onClear) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_close),
+                        contentDescription = "Очистить",
+                    )
                 }
             }
         },
     )
 }
 
+/** Сортировка и фильтр библиотеки: выбор сохраняется между запусками. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun EmptyLibraryCard(onShowImportDialog: () -> Unit) {
+private fun LibraryToolbar(
+    sort: SongSort,
+    filter: SongFilter,
+    onSortChange: (SongSort) -> Unit,
+    onFilterChange: (SongFilter) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                painter = painterResource(R.drawable.ic_sort),
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = "Сортировка",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+        ) {
+            SongSort.entries.forEach { option ->
+                FilterChip(
+                    selected = sort == option,
+                    onClick = { onSortChange(option) },
+                    label = { Text(option.title) },
+                    modifier = Modifier.testTag("songs_sort_${option.name}"),
+                )
+            }
+        }
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+        ) {
+            SongFilter.entries.forEach { option ->
+                FilterChip(
+                    selected = filter == option,
+                    onClick = { onFilterChange(option) },
+                    label = { Text(option.title) },
+                    modifier = Modifier.testTag("songs_filter_${option.name}"),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyLibraryCard(
+    onShowImportDialog: () -> Unit,
+    onAddSong: () -> Unit,
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -594,14 +712,25 @@ private fun EmptyLibraryCard(onShowImportDialog: () -> Unit) {
         Column(Modifier.padding(16.dp)) {
             Text("Пока нет сохранённых песен", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Откройте вкладку «Онлайн», найдите песню или загрузите пример " +
-                    "с песнями «Король и Шут» и «Би-2».",
+                text = "Откройте вкладку «Онлайн», найдите песню, добавьте свою или " +
+                    "загрузите пример с песнями «Король и Шут» и «Би-2».",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
             )
-            Button(onClick = onShowImportDialog) {
-                Text("Загрузить пример")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onAddSong) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_add),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("Своя песня")
+                }
+                OutlinedButton(onClick = onShowImportDialog) {
+                    Text("Загрузить пример")
+                }
             }
         }
     }
@@ -619,11 +748,11 @@ private fun ArtistFolderCard(folder: ArtistFolder, onClick: () -> Unit) {
             modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = "♪",
-                style = MaterialTheme.typography.headlineSmall,
-                fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.primary,
+            Icon(
+                painter = painterResource(R.drawable.ic_songs),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp),
             )
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -639,7 +768,11 @@ private fun ArtistFolderCard(folder: ArtistFolder, onClick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Text("›", style = MaterialTheme.typography.headlineSmall)
+            Icon(
+                painter = painterResource(R.drawable.ic_chevron_right),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -650,6 +783,7 @@ private fun LibrarySongCard(
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onToggleFavorite: () -> Unit,
+    onEdit: () -> Unit,
     showArtist: Boolean = false,
     selectionMode: Boolean = false,
     selected: Boolean = false,
@@ -707,31 +841,60 @@ private fun LibrarySongCard(
                             append(" · ")
                             append(it)
                         }
+                        append(" · ")
+                        append(song.source ?: "Из каталога")
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             if (!selectionMode) {
-                TextButton(
+                IconButton(
+                    onClick = onEdit,
+                    modifier = Modifier.testTag("songs_edit_${song.id}"),
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_edit),
+                        contentDescription = "Редактировать",
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(
                     onClick = onToggleFavorite,
                     modifier = Modifier.testTag("songs_favorite_${song.id}"),
                 ) {
-                    Text(
-                        text = if (song.favorite) "♥" else "♡",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = if (song.favorite) {
+                    Icon(
+                        painter = painterResource(
+                            if (song.favorite) {
+                                R.drawable.ic_favorite
+                            } else {
+                                R.drawable.ic_favorite_border
+                            },
+                        ),
+                        contentDescription = if (song.favorite) {
+                            "Убрать из избранного"
+                        } else {
+                            "В избранное"
+                        },
+                        modifier = Modifier.size(22.dp),
+                        tint = if (song.favorite) {
                             MaterialTheme.colorScheme.primary
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },
                     )
                 }
-                TextButton(
+                IconButton(
                     onClick = onDelete,
                     modifier = Modifier.testTag("songs_delete_${song.id}"),
                 ) {
-                    Text("Удалить")
+                    Icon(
+                        painter = painterResource(R.drawable.ic_delete),
+                        contentDescription = "Удалить",
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -832,6 +995,16 @@ private fun OnlineContent(
             }
         }
 
+        if (state.searchFromCache) {
+            item {
+                CacheBanner(
+                    source = state.source.title,
+                    savedAt = state.searchCacheSavedAt,
+                    onRetry = onSearch,
+                )
+            }
+        }
+
         item {
             ExampleImportCard(
                 enabled = state.importProgress == null,
@@ -878,9 +1051,46 @@ private fun OnlineContent(
     }
 }
 
+/** Плашка «показан кэш»: честно говорит, что данные не свежие. */
 @Composable
-private fun SectionTitle(text: String) {
-    Text(
+private fun CacheBanner(
+    source: String,
+    savedAt: Long,
+    onRetry: () -> Unit,
+) {
+    val time = remember(savedAt) {
+        if (savedAt <= 0) {
+            "ранее"
+        } else {
+            SimpleDateFormat("d MMM, HH:mm", Locale("ru")).format(Date(savedAt))
+        }
+    }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("songs_cache_banner"),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+        ),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                text = "Сохранённый поиск · $source · $time",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Text(
+                text = "Нет сети — показаны результаты, сохранённые на устройстве.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            TextButton(onClick = onRetry) { Text("Повторить поиск") }
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String) {    Text(
         text = text,
         style = MaterialTheme.typography.titleMedium,
         modifier = Modifier.padding(top = 8.dp),

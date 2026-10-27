@@ -5,6 +5,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -44,6 +48,8 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -74,6 +80,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -96,10 +103,11 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
+import ru.eurovafel.guitartuner.R
 import ru.eurovafel.guitartuner.model.InstrumentTuning
 import ru.eurovafel.guitartuner.model.PitchMath
+import ru.eurovafel.guitartuner.settings.AppSettings
 import ru.eurovafel.guitartuner.ui.theme.GuitarTunerTheme
-import ru.eurovafel.guitartuner.ui.theme.ThemeChoice
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -118,8 +126,8 @@ private const val GAUGE_RANGE_CENTS = 50.0
 
 @Composable
 fun TunerScreen(
-    themeChoice: ThemeChoice = ThemeChoice.MINT,
-    onThemeChange: (ThemeChoice) -> Unit = {},
+    onOpenAppSettings: () -> Unit = {},
+    onOpenMetronome: () -> Unit = {},
     viewModel: TunerViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -127,6 +135,16 @@ fun TunerScreen(
     val view = LocalView.current
     var hasPermission by remember { mutableStateOf(context.hasRecordPermission()) }
     var permissionRequested by rememberSaveable { mutableStateOf(false) }
+
+    // Настройки переживают перезапуск: строй, калибровка и режим захвата.
+    LaunchedEffect(Unit) {
+        val savedTuning = AppSettings.tuning(context)
+        if (state.tuning != savedTuning) viewModel.setTuning(savedTuning)
+        viewModel.setA4(AppSettings.a4(context))
+        viewModel.setStableCapture(AppSettings.stableCapture(context))
+    }
+    val sequential = AppSettings.sequentialTuning(context)
+    val vibrate = AppSettings.vibrateInTune(context)
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -149,12 +167,37 @@ fun TunerScreen(
         onDispose { view.keepScreenOn = false }
     }
 
+    // Вибро — один раз на новую настроенную струну, не на каждый кадр.
+    var previousTuned by remember { mutableStateOf(state.tunedMidi) }
+    LaunchedEffect(state.tunedMidi) {
+        if (vibrate && state.tunedMidi.size > previousTuned.size) {
+            context.vibrateInTune()
+        }
+        previousTuned = state.tunedMidi
+    }
+
+    // Последовательная настройка 6 → 1: старт с первой ненастроенной струны.
+    LaunchedEffect(sequential, state.listening) {
+        if (!sequential || !state.listening || state.activeStringMidi != null) {
+            return@LaunchedEffect
+        }
+        val next = state.tuning.midiNotes.firstOrNull { it !in state.tunedMidi }
+        if (next != null) viewModel.selectString(next)
+    }
+    // Автопереход только после попадания в ноту: 0,9 с видно галочку.
+    LaunchedEffect(state.tunedMidi, sequential, state.tuning) {
+        if (!sequential) return@LaunchedEffect
+        val active = state.activeStringMidi ?: return@LaunchedEffect
+        if (active !in state.tunedMidi) return@LaunchedEffect
+        delay(900)
+        val next = state.tuning.midiNotes.firstOrNull { it !in state.tunedMidi }
+        if (next != null) viewModel.selectString(next)
+    }
+
     TunerContent(
         state = state,
         hasPermission = hasPermission,
         permissionRequested = permissionRequested,
-        themeChoice = themeChoice,
-        onThemeChange = onThemeChange,
         onStart = {
             if (hasPermission) {
                 viewModel.start()
@@ -165,11 +208,23 @@ fun TunerScreen(
         },
         onStop = viewModel::stop,
         onOpenSettings = { context.openAppSettings() },
-        onTuningChange = viewModel::setTuning,
-        onA4Change = viewModel::setA4,
+        onOpenAppSettings = onOpenAppSettings,
+        onOpenMetronome = onOpenMetronome,
+        onTuningChange = {
+            AppSettings.setTuning(context, it)
+            viewModel.setTuning(it)
+        },
+        onA4Change = {
+            AppSettings.setA4(context, it)
+            viewModel.setA4(it)
+        },
         onSelectString = viewModel::selectString,
-        onStableCaptureChange = viewModel::setStableCapture,
+        onStableCaptureChange = {
+            AppSettings.setStableCapture(context, it)
+            viewModel.setStableCapture(it)
+        },
         onPlayReference = viewModel::playReference,
+        onResetTuned = viewModel::resetTuned,
         modifier = Modifier.testTag("tuner_screen"),
     )
 }
@@ -182,13 +237,14 @@ fun TunerContent(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenAppSettings: () -> Unit = {},
+    onOpenMetronome: () -> Unit = {},
     onTuningChange: (InstrumentTuning) -> Unit,
     onA4Change: (Double) -> Unit,
     onSelectString: (Int?) -> Unit,
     onStableCaptureChange: (Boolean) -> Unit,
     onPlayReference: () -> Unit,
-    themeChoice: ThemeChoice = ThemeChoice.MINT,
-    onThemeChange: (ThemeChoice) -> Unit = {},
+    onResetTuned: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val reading = state.reading
@@ -302,10 +358,30 @@ fun TunerContent(
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.weight(1f),
             )
-            ThemeMenu(
-                current = themeChoice,
-                onSelect = onThemeChange,
-            )
+            IconButton(
+                onClick = onOpenMetronome,
+                modifier = Modifier
+                    .size(40.dp)
+                    .testTag("tuner_metronome"),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_metronome),
+                    contentDescription = "Метроном",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(
+                onClick = onOpenAppSettings,
+                modifier = Modifier
+                    .size(40.dp)
+                    .testTag("tuner_settings"),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_settings),
+                    contentDescription = "Настройки",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             TuningMenu(
                 current = state.tuning,
                 a4 = state.a4,
@@ -434,8 +510,49 @@ fun TunerContent(
             StringRow(
                 tuning = state.tuning,
                 selectedMidi = stringMidi,
+                tunedMidi = state.tunedMidi,
                 onSelectString = onSelectString,
             )
+            val allTuned = state.tuning.midiNotes.isNotEmpty() &&
+                state.tuning.midiNotes.all { it in state.tunedMidi }
+            if (allTuned) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("tuner_all_tuned"),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    ),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_check),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = "Все струны настроены",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                            Text(
+                                text = "Можно играть. «Заново» сбросит галочки.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                        TextButton(onClick = onResetTuned) {
+                            Text("Заново")
+                        }
+                    }
+                }
+            }
         }
 
         Row(
@@ -553,61 +670,6 @@ fun TunerContent(
     }
 }
 
-/** Выбор цветовой схемы: четыре точки-образца. */
-@Composable
-private fun ThemeMenu(
-    current: ThemeChoice,
-    onSelect: (ThemeChoice) -> Unit,
-) {
-    var open by remember { mutableStateOf(false) }
-
-    Box {
-        TextButton(
-            onClick = { open = true },
-            modifier = Modifier.testTag("theme_menu"),
-        ) {
-            Text(
-                text = "◐",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        DropdownMenu(
-            expanded = open,
-            onDismissRequest = { open = false },
-        ) {
-            ThemeChoice.entries.forEach { choice ->
-                DropdownMenuItem(
-                    text = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Box(
-                                Modifier
-                                    .size(16.dp)
-                                    .background(choice.preview, CircleShape),
-                            )
-                            Text(
-                                text = choice.title,
-                                modifier = Modifier.weight(1f, fill = false),
-                            )
-                            if (choice == current) {
-                                Text("✓", color = MaterialTheme.colorScheme.primary)
-                            }
-                        }
-                    },
-                    onClick = {
-                        onSelect(choice)
-                        open = false
-                    },
-                    modifier = Modifier.testTag("theme_${choice.name}"),
-                )
-            }
-        }
-    }
-}
-
 @Composable
 private fun TuningMenu(
     current: InstrumentTuning,
@@ -670,6 +732,7 @@ private fun stringOrdinal(number: Int): String = when (number) {
 private fun StringRow(
     tuning: InstrumentTuning,
     selectedMidi: Int?,
+    tunedMidi: Set<Int>,
     onSelectString: (Int?) -> Unit,
 ) {
     Row(
@@ -679,19 +742,30 @@ private fun StringRow(
         tuning.midiNotes.forEach { midi ->
             val number = tuning.midiNotes.size - tuning.midiNotes.indexOf(midi)
             val note = PitchMath.reading(PitchMath.midiToFrequency(midi)).fullName
+            val tuned = midi in tunedMidi
             FilterChip(
                 selected = midi == selectedMidi,
                 onClick = { onSelectString(midi) },
                 shape = RoundedCornerShape(14.dp),
                 label = {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "$number",
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-                            lineHeight = 19.sp,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "$number",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp,
+                                lineHeight = 19.sp,
+                            )
+                            if (tuned) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_check),
+                                    contentDescription = "Настроена",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(13.dp),
+                                )
+                            }
+                        }
                         Text(
                             text = note,
                             fontSize = 15.sp,
@@ -1747,6 +1821,19 @@ private fun CentsGauge(
                 topLeft = Offset(x, size.height - layout.size.height),
             )
         }
+    }
+}
+
+private fun Context.vibrateInTune() {
+    val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
+    } else {
+        @Suppress("DEPRECATION")
+        getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+    } ?: return
+    if (!vibrator.hasVibrator()) return
+    runCatching {
+        vibrator.vibrate(VibrationEffect.createOneShot(28L, 140))
     }
 }
 

@@ -12,7 +12,9 @@ import org.osmdroid.config.Configuration
 import ru.eurovafel.guitartuner.ui.AppRoot
 import ru.eurovafel.guitartuner.ui.theme.GuitarTunerTheme
 import ru.eurovafel.guitartuner.ui.theme.loadThemeChoice
+import ru.eurovafel.guitartuner.ui.theme.loadThemeMode
 import ru.eurovafel.guitartuner.ui.theme.saveThemeChoice
+import ru.eurovafel.guitartuner.ui.theme.saveThemeMode
 import java.io.File
 
 class MainActivity : ComponentActivity() {
@@ -40,13 +42,19 @@ class MainActivity : ComponentActivity() {
         setContent {
             // Тема живёт в Activity: смена схемы сразу перекрашивает все экраны.
             var themeChoice by remember { mutableStateOf(loadThemeChoice(this)) }
-            GuitarTunerTheme(choice = themeChoice) {
+            var themeMode by remember { mutableStateOf(loadThemeMode(this)) }
+            GuitarTunerTheme(choice = themeChoice, mode = themeMode) {
                 AppRoot(
                     importExamples = importExamples,
                     themeChoice = themeChoice,
                     onThemeChange = { choice ->
                         themeChoice = choice
                         saveThemeChoice(this, choice)
+                    },
+                    themeMode = themeMode,
+                    onThemeModeChange = { mode ->
+                        themeMode = mode
+                        saveThemeMode(this, mode)
                     },
                 )
             }

@@ -1,6 +1,7 @@
 package ru.eurovafel.guitartuner.ui.songs
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -25,10 +26,14 @@ import ru.eurovafel.guitartuner.catalog.CatalogSource
 import ru.eurovafel.guitartuner.catalog.RemoteArtist
 import ru.eurovafel.guitartuner.catalog.RemoteSong
 import ru.eurovafel.guitartuner.catalog.SongCatalog
+import ru.eurovafel.guitartuner.data.CachedSearch
+import ru.eurovafel.guitartuner.data.CatalogCache
 import ru.eurovafel.guitartuner.data.Song
 import ru.eurovafel.guitartuner.data.SongRepository
 import ru.eurovafel.guitartuner.data.songKey
 import ru.eurovafel.guitartuner.data.toSong
+import ru.eurovafel.guitartuner.model.ChordTransposer
+import java.util.UUID
 
 data class ArtistFolder(
     val artist: String,
@@ -56,7 +61,6 @@ data class ImportProgress(
 data class SongsUiState(
     val loading: Boolean = true,
     val songs: List<Song> = emptyList(),
-    val artists: List<ArtistFolder> = emptyList(),
     val savedKeys: Set<String> = emptySet(),
     val savedUrls: Set<String> = emptySet(),
     val openedArtist: String? = null,
@@ -74,15 +78,42 @@ data class SongsUiState(
     val importProgress: ImportProgress? = null,
     val message: String? = null,
     val error: String? = null,
+    val sort: SongSort = SongSort.ARTIST,
+    val filter: SongFilter = SongFilter.ALL,
+    val searchFromCache: Boolean = false,
+    val searchCacheSavedAt: Long = 0L,
 ) {
+    /** Песни, прошедшие выбранный фильтр. */
+    val visibleSongs: List<Song>
+        get() = if (filter == SongFilter.ALL) songs else songs.filter { it.matchesFilter(filter) }
+
+    /** Папки по исполнителям в выбранном порядке. */
+    val artists: List<ArtistFolder>
+        get() = visibleSongs
+            .groupBy { it.artist }
+            .map { (artist, artistSongs) ->
+                ArtistFolder(artist = artist, songs = artistSongs.orderedBy(sort))
+            }
+            .let { folders ->
+                when (sort) {
+                    SongSort.RECENT -> folders.sortedByDescending {
+                        it.songs.maxOfOrNull { song -> song.lastPlayedAt } ?: 0L
+                    }
+                    SongSort.FREQUENT -> folders.sortedByDescending {
+                        it.songs.sumOf { song -> song.playCount }
+                    }
+                    else -> folders.sortedBy { it.artist.lowercase() }
+                }
+            }
+
     val openedFolder: ArtistFolder?
         get() = artists.firstOrNull { it.artist == openedArtist }
 
     /** Песни с сердечком — отдельная папка «Избранное». */
     val favorites: List<Song>
-        get() = songs
+        get() = visibleSongs
             .filter { it.favorite }
-            .sortedWith(compareBy({ it.artist.lowercase() }, { it.title.lowercase() }))
+            .orderedBy(sort)
 
     val selectedCount: Int get() = selectedIds.size
 
@@ -91,12 +122,12 @@ data class SongsUiState(
         get() {
             val needle = localQuery.trim()
             if (needle.isEmpty()) return emptyList()
-            return songs
+            return visibleSongs
                 .filter {
                     it.title.contains(needle, ignoreCase = true) ||
                         it.artist.contains(needle, ignoreCase = true)
                 }
-                .sortedWith(compareBy({ it.artist.lowercase() }, { it.title.lowercase() }))
+                .orderedBy(sort)
         }
 
     val localSearching: Boolean get() = localQuery.isNotBlank()
@@ -109,8 +140,13 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = SongRepository(application)
     private val client = SongCatalog()
+    private val cache = CatalogCache(application)
+    private val preferences = application
+        .getSharedPreferences("songs_preferences", Context.MODE_PRIVATE)
 
-    private val _state = MutableStateFlow(SongsUiState())
+    private val _state = MutableStateFlow(
+        SongsUiState(sort = loadSort(), filter = loadFilter()),
+    )
     val state: StateFlow<SongsUiState> = _state.asStateFlow()
 
     private var searchJob: Job? = null
@@ -138,14 +174,6 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
                     current.copy(
                         loading = false,
                         songs = songs,
-                        artists = songs.groupBy { it.artist }
-                            .map { (artist, artistSongs) ->
-                                ArtistFolder(
-                                    artist = artist,
-                                    songs = artistSongs.sortedBy { it.title.lowercase() },
-                                )
-                            }
-                            .sortedBy { it.artist.lowercase() },
                         savedKeys = songs.map { it.songKey() }.toSet(),
                         savedUrls = songs.mapNotNull { it.sourceUrl }.toSet(),
                         selectedIds = current.selectedIds.filterTo(HashSet()) { it in existingIds },
@@ -168,6 +196,26 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(query = query) }
     }
 
+    fun setSort(sort: SongSort) {
+        preferences.edit().putString(KEY_SORT, sort.name).apply()
+        _state.update { it.copy(sort = sort) }
+    }
+
+    fun setFilter(filter: SongFilter) {
+        preferences.edit().putString(KEY_FILTER, filter.name).apply()
+        _state.update { it.copy(filter = filter) }
+    }
+
+    /** Сколько запросов сохранено в офлайн-кэше каталога. */
+    fun cachedSearches(): Int = cache.size()
+
+    fun clearCatalogCache(): Int {
+        val size = cache.size()
+        cache.clear()
+        _state.update { it.copy(message = "Кэш каталога очищен") }
+        return size
+    }
+
     /** Смена источника очищает прошлые результаты: они от другого сайта. */
     fun selectSource(source: CatalogSource) {
         if (_state.value.source == source) return
@@ -179,6 +227,8 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
                 searched = false,
                 remoteSongs = emptyList(),
                 remoteArtists = emptyList(),
+                searchFromCache = false,
+                searchCacheSavedAt = 0L,
             )
         }
     }
@@ -191,26 +241,52 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
 
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
-            _state.update { it.copy(searching = true, searched = true, error = null) }
+            // Сначала показываем сохранённое: в метро это лучше пустого экрана.
+            val cached = withContext(Dispatchers.IO) { cache.loadSearch(source, query) }
+            _state.update {
+                it.copy(
+                    searching = true,
+                    searched = true,
+                    error = null,
+                    remoteSongs = cached?.result?.songs ?: emptyList(),
+                    remoteArtists = cached?.result?.artists ?: emptyList(),
+                    searchFromCache = cached != null,
+                    searchCacheSavedAt = cached?.savedAt ?: 0L,
+                )
+            }
+
             val result = withContext(Dispatchers.IO) {
                 runCatching { client.search(query, source) }
             }
             result.onSuccess { searchResult ->
+                withContext(Dispatchers.IO) { cache.saveSearch(source, query, searchResult) }
                 _state.update {
                     it.copy(
                         searching = false,
                         remoteSongs = searchResult.songs,
                         remoteArtists = searchResult.artists,
+                        searchFromCache = false,
+                        searchCacheSavedAt = 0L,
                     )
                 }
             }.onFailure { error ->
+                val hasCache = cached != null &&
+                    (cached.result.songs.isNotEmpty() || cached.result.artists.isNotEmpty())
                 _state.update {
-                    it.copy(
-                        searching = false,
-                        remoteSongs = emptyList(),
-                        remoteArtists = emptyList(),
-                        error = "Поиск не удался: ${error.userMessage()}",
-                    )
+                    if (hasCache) {
+                        it.copy(
+                            searching = false,
+                            message = "Нет сети: показаны сохранённые результаты",
+                        )
+                    } else {
+                        it.copy(
+                            searching = false,
+                            remoteSongs = emptyList(),
+                            remoteArtists = emptyList(),
+                            searchFromCache = false,
+                            error = "Поиск не удался: ${error.userMessage()}",
+                        )
+                    }
                 }
             }
         }
@@ -225,6 +301,8 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
                 searched = false,
                 remoteSongs = emptyList(),
                 remoteArtists = emptyList(),
+                searchFromCache = false,
+                searchCacheSavedAt = 0L,
             )
         }
     }
@@ -352,7 +430,7 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
                 runCatching { client.song(remote.url) }
             }
             result.onSuccess { page ->
-                val song = page.toSong()
+                val song = page.toSong(sourceName = remote.sourceName)
                 repository.save(song)
                 _state.update {
                     it.copy(
@@ -409,6 +487,82 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
 
     fun consumeError() {
         _state.update { it.copy(error = null) }
+    }
+
+    /**
+     * Своя песня: сохраняется сразу, без сети. [existing] не null — это
+     * редактирование, поэтому id и статистика остаются прежними.
+     */
+    fun saveManualSong(
+        existing: Song?,
+        title: String,
+        artist: String,
+        bpm: Int,
+        chords: String,
+        key: String?,
+        onSaved: (Song) -> Unit,
+    ) {
+        val cleanTitle = title.trim().ifEmpty { "Без названия" }
+        val cleanArtist = artist.trim().ifEmpty { "Без исполнителя" }
+        if (chords.isBlank()) {
+            _state.update { it.copy(error = "Текст песни пуст") }
+            return
+        }
+        val base = existing ?: Song(
+            id = "custom:" + UUID.randomUUID().toString().take(8),
+            title = cleanTitle,
+            artist = cleanArtist,
+            bpm = bpm,
+            chords = chords,
+            source = CUSTOM_SOURCE,
+        )
+        val song = base.copy(
+            title = cleanTitle,
+            artist = cleanArtist,
+            bpm = bpm.coerceIn(20, 300),
+            chords = chords,
+            key = key?.trim()?.takeIf { it.isNotEmpty() }
+                ?: ChordTransposer.detectKey(chords),
+            source = base.source,
+            savedAt = if (base.savedAt > 0) base.savedAt else System.currentTimeMillis(),
+        )
+        viewModelScope.launch {
+            runCatching { repository.save(song) }
+                .onSuccess {
+                    _state.update {
+                        it.copy(message = if (existing == null) {
+                            "Сохранено: ${song.title}"
+                        } else {
+                            "Обновлено: ${song.title}"
+                        })
+                    }
+                    onSaved(song)
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(error = "Не удалось сохранить: ${error.userMessage()}")
+                    }
+                }
+        }
+    }
+
+    /** Темп сохраняется в песню точечно, без перезаписи остальных полей. */
+    fun updateBpm(song: Song, bpm: Int) {
+        viewModelScope.launch {
+            runCatching { repository.updateBpm(song.id, bpm) }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(error = "Не удалось сохранить темп: ${error.userMessage()}")
+                    }
+                }
+        }
+    }
+
+    /** Отметка «играли»: питает сортировки «Недавние» и «Часто играю». */
+    fun markPlayed(song: Song) {
+        viewModelScope.launch {
+            runCatching { repository.markPlayed(song.id) }
+        }
     }
 
     /** Удаление из локальной библиотеки: папка и поиск обновятся сами. */
@@ -524,7 +678,9 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
                         }
 
                         val page = runCatching { client.song(remote.url) }.getOrNull()
-                        val song = page?.let { runCatching { it.toSong() }.getOrNull() }
+                        val song = page?.let {
+                            runCatching { it.toSong(sourceName = remote.sourceName) }.getOrNull()
+                        }
 
                         lock.withLock {
                             if (song == null) {
@@ -586,9 +742,21 @@ class SongsViewModel(application: Application) : AndroidViewModel(application) {
         val failed: Int,
     )
 
+    private fun loadSort(): SongSort {
+        val saved = preferences.getString(KEY_SORT, null)
+        return SongSort.entries.firstOrNull { it.name == saved } ?: SongSort.ARTIST
+    }
+
+    private fun loadFilter(): SongFilter {
+        val saved = preferences.getString(KEY_FILTER, null)
+        return SongFilter.entries.firstOrNull { it.name == saved } ?: SongFilter.ALL
+    }
+
     private companion object {
         const val IMPORT_CONCURRENCY = 4
         const val SAVE_BATCH_SIZE = 20
         const val IMPORT_REQUEST_DELAY_MS = 100L
+        const val KEY_SORT = "song_sort"
+        const val KEY_FILTER = "song_filter"
     }
 }

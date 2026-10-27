@@ -7,6 +7,7 @@ import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -72,7 +73,7 @@ class MainActivityTest {
         composeRule.onNodeWithTag("songs_song_demo-2").assertIsDisplayed()
         composeRule.onNodeWithTag("songs_local_empty").assertDoesNotExist()
 
-        composeRule.onNodeWithText("✕").performClick()
+        composeRule.onNodeWithContentDescription("Очистить").performClick()
         composeRule.onNodeWithTag("songs_song_demo-1").assertDoesNotExist()
     }
 
