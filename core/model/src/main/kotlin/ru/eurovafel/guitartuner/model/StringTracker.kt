@@ -18,10 +18,12 @@ class StringTracker(
     private val switchFrames: Int = 12,
     private val releaseFrames: Int = 12,
     private val ancestorFrames: Int = 2,
+    private val candidateHoldFrames: Int = 3,
 ) {
     private var activeMidi: Int? = null
     private var candidateMidi: Int? = null
     private var candidateFrames = 0
+    private var candidateWeakFrames = 0
     private var silentFrames = 0
 
     /** @return активная струна или null, пока струна ещё не определена. */
@@ -42,8 +44,14 @@ class StringTracker(
         }
 
         if (matched == null) {
-            clearCandidate()
             silentFrames++
+            // Слабый кадр на затухании не обнуляет окно смены: иначе щипок
+            // с «мигающим» сигналом (кадр слышно — кадр тихо) никогда бы
+            // не переключил струну. Длинный провал кандидата стирает.
+            if (candidateMidi != null) {
+                candidateWeakFrames++
+                if (candidateWeakFrames >= candidateHoldFrames) clearCandidate()
+            }
             if (silentFrames >= releaseFrames) activeMidi = null
             return activeMidi
         }
@@ -91,6 +99,7 @@ class StringTracker(
     }
 
     private fun addCandidate(midi: Int) {
+        candidateWeakFrames = 0
         if (candidateMidi == midi) {
             candidateFrames++
         } else {
@@ -102,6 +111,7 @@ class StringTracker(
     private fun clearCandidate() {
         candidateMidi = null
         candidateFrames = 0
+        candidateWeakFrames = 0
     }
 
     private companion object {

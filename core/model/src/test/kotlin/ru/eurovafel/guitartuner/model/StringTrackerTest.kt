@@ -116,4 +116,36 @@ class StringTrackerTest {
         assertEquals(40, tracker.update(guitar, 61)) // C#4 is not an open string
         assertEquals(40, tracker.update(guitar, 40))
     }
+
+    @Test
+    fun `flickering signal still switches thanks to the candidate hold`() {
+        val tracker = StringTracker(acquireFrames = 1, switchFrames = 4, candidateHoldFrames = 2)
+        assertEquals(40, tracker.update(guitar, 40))
+
+        // Каждый второй кадр слабый: без hold счётчик обнулялся бы на каждом
+        // провале, и смена струны не происходила бы никогда.
+        assertEquals(40, tracker.update(guitar, 45))
+        assertEquals(40, tracker.update(guitar, null))
+        assertEquals(40, tracker.update(guitar, 45))
+        assertEquals(40, tracker.update(guitar, null))
+        assertEquals(40, tracker.update(guitar, 45))
+        assertEquals(40, tracker.update(guitar, null))
+        assertEquals(45, tracker.update(guitar, 45))
+        assertEquals(45, tracker.update(guitar, null))
+        assertEquals(45, tracker.update(guitar, 45))
+    }
+
+    @Test
+    fun `long gap clears the switch candidate`() {
+        val tracker = StringTracker(acquireFrames = 1, switchFrames = 4, candidateHoldFrames = 2)
+        assertEquals(40, tracker.update(guitar, 40))
+
+        assertEquals(40, tracker.update(guitar, 45))
+        assertEquals(40, tracker.update(guitar, null))
+        assertEquals(40, tracker.update(guitar, null)) // кандидат стёрт
+        assertEquals(40, tracker.update(guitar, 45))
+        assertEquals(40, tracker.update(guitar, 45))
+        assertEquals(40, tracker.update(guitar, 45))
+        assertEquals(45, tracker.update(guitar, 45))
+    }
 }

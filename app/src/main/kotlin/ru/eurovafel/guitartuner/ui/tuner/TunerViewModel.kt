@@ -430,7 +430,7 @@ class TunerViewModel : ViewModel() {
     }
 
     private fun createStringTracker(stable: Boolean): StringTracker = if (stable) {
-        StringTracker(acquireFrames = 6, switchFrames = 16, releaseFrames = 60)
+        StringTracker(acquireFrames = 6, switchFrames = 12, releaseFrames = 60)
     } else {
         StringTracker(acquireFrames = 3, switchFrames = 6, releaseFrames = 24)
     }
@@ -472,11 +472,11 @@ class TunerViewModel : ViewModel() {
         const val MIN_A4 = 430.0
         const val MAX_A4 = 450.0
         const val STABLE_STRING_MIN_CLARITY = 0.86
-        /** Порог RMS исходного сигнала (до усиления): ≈0.010 при ×8. */
-        const val STABLE_STRING_MIN_RMS = 0.00125
+        /** Порог RMS исходного сигнала (до усиления): ≈0.012 при ×8. */
+        const val STABLE_STRING_MIN_RMS = 0.0015
         const val FAST_STRING_MIN_CLARITY = 0.78
-        /** ≈0.006 при ×8. */
-        const val FAST_STRING_MIN_RMS = 0.00075
+        /** ≈0.007 при ×8. */
+        const val FAST_STRING_MIN_RMS = 0.00085
         /** Пауза перед щипком, после которой перепроверяем струну. */
         const val NEW_PLUCK_SILENCE_FRAMES = 4
         /** Сколько кадров (≈85 мс каждый) держим последнюю ноту на затухании. */

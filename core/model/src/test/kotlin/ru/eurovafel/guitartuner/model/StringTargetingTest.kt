@@ -55,8 +55,24 @@ class StringTargetingTest {
     }
 
     @Test
-    fun `target is frozen while a non open note sounds`() {
-        assertEquals(55, StringTargeting.resolve(guitar, 300.0, active = 55))
+    fun `note clearly closer to another open string switches the target`() {
+        // 300 Гц заметно ближе к E4 (329.6 Гц), чем к активной G3 (196 Гц):
+        // это уже похоже на расстроенную первую струну, а не на шум G3.
+        assertEquals(64, StringTargeting.resolve(guitar, 300.0, active = 55))
+    }
+
+    @Test
+    fun `target stays when the note is closer to the active string`() {
+        // E4 активна, детектор дрожит на −78 ¢ — это сама струна, не B3.
+        assertEquals(64, StringTargeting.resolve(guitar, 315.0, active = 64))
+    }
+
+    @Test
+    fun `detuned other string switches the target without a new pluck`() {
+        // A2 на целый тон ниже строя: дальше, чем SWITCH_CENTS, но явно ближе
+        // к A2, чем к активной E2. Раньше такое переключение не происходило.
+        val flat = 2.0.pow(-200.0 / 1200.0)
+        assertEquals(45, StringTargeting.resolve(guitar, a2 * flat, active = 40))
     }
 
     @Test

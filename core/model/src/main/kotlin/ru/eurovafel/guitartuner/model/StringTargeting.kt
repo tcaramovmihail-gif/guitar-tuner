@@ -17,6 +17,14 @@ object StringTargeting {
     /** Допуск «это точно другая открытая струна», центы. */
     const val SWITCH_CENTS = 100.0
 
+    /**
+     * Гистерезис переключения: другая открытая струна забирает цель, только
+     * если она ближе к звуку, чем активная, с запасом [SWITCH_MARGIN_CENTS].
+     * Запас защищает от шумовых кадров «посередине» между струнами; расстройку
+     * в пару полутонов (новые струны, смена строя) он не мешает переключать.
+     */
+    const val SWITCH_MARGIN_CENTS = 50.0
+
     /** Допуск для подсказки «Слышу …», центы. */
     const val HINT_CENTS = 100.0
 
@@ -44,8 +52,16 @@ object StringTargeting {
             val other = openStrings
                 .filter { it != active }
                 .minByOrNull { abs(centsFrom(frequency, it, a4)) }
-            if (other != null && abs(centsFrom(frequency, other, a4)) <= SWITCH_CENTS) {
-                return other
+            if (other != null) {
+                val otherCents = abs(centsFrom(frequency, other, a4))
+                // Точно чужая открытая струна — сразу она.
+                if (otherCents <= SWITCH_CENTS) return other
+                // Струна может быть расстроена больше чем на полтона (новые
+                // струны, смена строя). Если нота явно ближе к другой открытой
+                // струне, чем к активной, — это она. Tracker подтвердит смену
+                // несколькими кадрами подряд, одиночный шумовой кадр не страшен.
+                val activeCents = abs(centsFrom(frequency, active, a4))
+                if (otherCents + SWITCH_MARGIN_CENTS < activeCents) return other
             }
             // Цель зафиксирована: обертон, промах и шум не переключают шкалу.
             return active
