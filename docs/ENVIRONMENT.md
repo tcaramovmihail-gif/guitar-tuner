@@ -146,11 +146,14 @@ adb shell am instrument -w -e class ru.eurovafel.guitartuner.MainActivityTest `
 
 - `keystore.properties` и `*.jks` — только локально, в git не попадают.
 - Release-сборка: `.\gradlew.bat :app:bundleRelease` (AAB) или `assembleRelease` (APK).
+- `app/build.gradle.kts` подключает release-подпись только при наличии
+  `keystore.properties` в корне проекта.
 - Для RuStore нужен подписанный файл, уникальный `applicationId`, растущий
   `versionCode`, иконка 512×512, ≥3 скриншота, политика конфиденциальности
   (доступ к микрофону).
 - Ключ подписи создаётся один раз и хранится с резервной копией: смена ключа ломает
   обновления.
+- Пошаговая схема: `docs/RUSTORE.md`; черновик политики: `docs/PRIVACY.md`.
 
 ## Диагностика
 

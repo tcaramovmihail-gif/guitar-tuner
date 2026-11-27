@@ -1,7 +1,5 @@
 package ru.eurovafel.guitartuner.ui.feedback
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,9 +30,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-
-private const val RELEASE_URL =
-    "https://github.com/tcaramovmihail-gif/guitar-tuner/releases/latest"
 
 /**
  * Обратная связь: оценка приложения и свободное мнение.
@@ -219,30 +214,20 @@ fun FeedbackScreen(viewModel: FeedbackViewModel) {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    text = "Последняя версия",
+                    text = "Версия приложения",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
                     text = if (versionName.isBlank()) {
-                        "Свежий APK и список изменений — на GitHub."
+                        "Обновления и список изменений выходят в RuStore."
                     } else {
-                        "У вас версия $versionName. Свежий APK и список изменений — на GitHub."
+                        "У вас версия $versionName. Обновления и список изменений " +
+                            "выходят в RuStore."
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Button(
-                    onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(RELEASE_URL))
-                        runCatching { context.startActivity(intent) }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("feedback_release_open"),
-                ) {
-                    Text("Открыть страницу релиза")
-                }
             }
         }
 

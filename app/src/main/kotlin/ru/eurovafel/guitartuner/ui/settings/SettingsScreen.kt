@@ -1,7 +1,5 @@
 package ru.eurovafel.guitartuner.ui.settings
 
-import android.content.Intent
-import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -292,16 +290,13 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            TextButton(
-                onClick = {
-                    val url = "https://github.com/tcaramovmihail-gif/guitar-tuner/releases"
-                    runCatching {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                    }
-                },
-            ) {
-                Text("Версии и исходный код")
-            }
+            Text(
+                text = "Обновления выходят в RuStore — там же список изменений. " +
+                    "Приложение не собирает аккаунты и не отправляет звук с микрофона " +
+                    "на сервер.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Spacer(Modifier.padding(bottom = 24.dp))
         }
     }
